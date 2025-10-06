@@ -167,7 +167,7 @@ public class VolcanoCLI {
     }
 
     private static void handleVersionCommand() {
-        println("@ VolcanoScript v0.0.5");
+        println("@ VolcanoScript v0.0.6");//在这里配置版本信息
         println("A lightly script language");
         println("Built for simplicity and performance");
         println("Java: " + System.getProperty("java.version"));

@@ -1,8 +1,5 @@
 package com.volcano.internal;
 
-/**
- * 数据类型操作内置库 - 自动导入，无需显式使用 imp 语句
- */
 public class DataType {
 
     // 字符串操作
