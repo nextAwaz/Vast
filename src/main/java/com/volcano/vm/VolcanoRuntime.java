@@ -7,7 +7,7 @@ import java.lang.reflect.*;
 import com.volcano.internal.*;
 import com.volcano.internal.exception.*;
 
-public class VolcanoRuntime {
+public class VolcanoRuntime {//Volcano Runtime的核心，也是最复杂的一个类
     private final Map<String, Class<?>> importedClasses;
     private final Map<String, Object> variables;
     private final Map<String, String> variableTypes = new HashMap<>(); // 存储静态类型声明（如 "int","double","boolean","string"）
@@ -624,7 +624,7 @@ public class VolcanoRuntime {
      * 处理 Sys.input 调用 - 支持多值输入
      */
     private void handleSysInput(String argsStr) throws Exception {
-        debugPrint("@ 处理输入调用: " + argsStr);
+        debugPrint("@ Process input calls: " + argsStr);
 
         if (argsStr.trim().isEmpty()) {
             // 无参数调用
@@ -638,11 +638,11 @@ public class VolcanoRuntime {
         String prompt = parseResult.prompt;
         List<String> varNames = parseResult.varNames;
 
-        debugPrint("@ 输入配置: 提示='%s', 变量数量=%d", prompt, varNames.size());
+        debugPrint("@ Input configuration: prompt='%s', number of variables=%d", prompt, varNames.size());
 
         if (varNames.size() > 1) {
             // 多个变量 - 使用多值输入
-            debugPrint("@ 多变量输入模式");
+            debugPrint("@ Multivariate input mode");
 
             // 读取一行输入
             String inputLine;
@@ -652,7 +652,7 @@ public class VolcanoRuntime {
                 inputLine = (String) methodInvocationHandler.invokeSysInput("\"" + prompt + "\"");
             }
 
-            debugPrint("@ 原始输入: '%s'", inputLine);
+            debugPrint("@ Original input: '%s'", inputLine);
 
             // 按空格分割输入
             String[] inputValues = inputLine.split("\\s+", varNames.size());
@@ -661,7 +661,7 @@ public class VolcanoRuntime {
             for (int i = 0; i < varNames.size(); i++) {
                 String value = (i < inputValues.length) ? inputValues[i] : "";
                 storeInputVariable(varNames.get(i), value);
-                debugPrint("@ 设置变量 '%s' = '%s'", varNames.get(i), value);
+                debugPrint("@ Set variables '%s' = '%s'", varNames.get(i), value);
             }
 
             this.lastResult = inputValues.length > 0 ? inputValues[0] : "";
@@ -677,7 +677,7 @@ public class VolcanoRuntime {
 
             // 存储变量
             storeInputVariable(varNames.get(0), input);
-            debugPrint("@ 设置变量 '%s' = '%s'", varNames.get(0), input);
+            debugPrint("@ Set variables '%s' = '%s'", varNames.get(0), input);
 
             this.lastResult = input;
         } else {
@@ -717,7 +717,7 @@ public class VolcanoRuntime {
             parseVariableDeclarations(cleanArgs, result.varNames);
         }
 
-        debugPrint("@ 解析结果: 提示='%s', 变量=%s", result.prompt, result.varNames);
+        debugPrint("@ parse result: prompt='%s', variables=%s", result.prompt, result.varNames);
         return result;
     }
 
@@ -733,7 +733,7 @@ public class VolcanoRuntime {
             String varName = matcher.group(1);
             if (!varNames.contains(varName)) {
                 varNames.add(varName);
-                debugPrint("@ 发现变量: " + varName);
+                debugPrint("@ find variables: " + varName);
             }
         }
 
