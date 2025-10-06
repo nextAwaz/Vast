@@ -37,3 +37,4 @@ Volcano Script 在设计上借鉴了Python和Ruby等动态语言的一些理念�
 Volcano Script 致力于在保持简洁性的同时，提供强大的Java程序集成能力，使其成为Java项目扩展的理想选择。
 
 *详细的操作方法和语法说明请参阅"操作指南.md"文档。*
+_由于初始版本的漏洞太多，因此你现在看到的Volcano Script的许多代码都是AI辅助重构的_
