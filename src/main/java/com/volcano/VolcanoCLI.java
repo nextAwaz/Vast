@@ -101,8 +101,16 @@ public class VolcanoCLI {
         }
 
         try {
-            println("@ Evaluating: " + code);
-            Volcano.execute(code.toString());
+            // 自动为 CLI eval 添加所有内置库的导入，避免手工写 imp
+            StringBuilder finalCode = new StringBuilder();
+            // VolcanoVM 在同一包中，可直接访问其静态 BUILTIN_CLASSES
+            for (String cls : VolcanoVM.BUILTIN_CLASSES.keySet()) {
+                finalCode.append("imp ").append(cls).append("\n");
+            }
+            finalCode.append(code.toString());
+
+            println("@ Evaluating: " + finalCode);
+            Volcano.execute(finalCode.toString());
         } catch (Volcano.VolcanoException e) {
             System.err.println("@ Evaluation failed: " + e.getMessage());
         }
@@ -316,7 +324,6 @@ public class VolcanoCLI {
         println("Shell Commands:");
         println("  exit, quit  - Exit shell");
         println("  clear       - Clear screen");
-        println("  help        - Show this help");
         println();
         println("You can type any VolcanoScript code directly:");
         println("  Sys.print('Hello World')");
