@@ -5,7 +5,7 @@ import java.nio.file.*;
 import java.util.*;
 
 public class VolcanoCLI {
-
+    static String ver = "0.0.7";//版本信息
     public static void main(String[] args) {
         if (args.length == 0) {
             printUsage();
@@ -167,7 +167,7 @@ public class VolcanoCLI {
     }
 
     private static void handleVersionCommand() {
-        println("@ VolcanoScript v0.0.6");//在这里配置版本信息
+        println("@ VolcanoScript v" + ver);
         println("A lightly script language");
         println("Built for simplicity and performance");
         println("Java: " + System.getProperty("java.version"));
