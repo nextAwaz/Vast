@@ -7,9 +7,6 @@ import java.util.*;
 import com.volcano.internal.Sys;
 import com.volcano.internal.exception.*;
 
-/**
- * 方法调用处理器 - 专门处理所有方法调用逻辑
- */
 public class MethodInvocationHandler {
 
     private final VolcanoRuntime runtime;
@@ -21,7 +18,8 @@ public class MethodInvocationHandler {
     }
 
     /**
-     * 执行方法调用
+     * 调用类的静态方法
+     * argsStr 形式保留为源码形式 (包含引号等) — 内部会解析并求值为 Object[]
      */
     public Object invokeMethod(String className, String methodName, String argsStr) throws Exception {
         // 验证基本格式
@@ -30,25 +28,24 @@ public class MethodInvocationHandler {
         // 查找类
         Class<?> clazz = findClass(className);
 
-        // 解析参数
-        Object[] args = parseArguments(argsStr);
+        // 解析参数（求值为 Java 对象）
+        Object[] args = parseArgumentsAsObjects(argsStr);
 
         // 查找并调用方法
         return invokeClassMethod(clazz, methodName, args);
     }
 
     /**
-     * 执行系统输入调用（特殊处理）
+     * 为 VolcanoRuntime 的 Sys.input 调用提供入口
+     * VolcanoRuntime 会调用 methodInvocationHandler.invokeSysInput("\"prompt\"") 或 invokeSysInput("")
+     * 这里解析并调用 Sys.input(...) 静态方法并返回其结果（String）
      */
     public Object invokeSysInput(String argsStr) throws Exception {
-        // 使用反射调用 Sys.input 方法
-        Object[] args = parseArguments(argsStr);
+        // 解析并求值参数为 Object[]（字符串字面量会被解析为不含引号的 String）
+        Object[] args = parseArgumentsAsObjects(argsStr);
         return invokeClassMethod(Sys.class, "input", args);
     }
 
-    /**
-     * 验证方法调用格式
-     */
     private void validateMethodCallFormat(String className, String methodName, String argsStr) {
         if (className == null || className.isEmpty()) {
             throw new NotGrammarException("Class name cannot be empty in method call");
@@ -69,9 +66,6 @@ public class MethodInvocationHandler {
         }
     }
 
-    /**
-     * 查找类
-     */
     private Class<?> findClass(String className) throws Exception {
         // 首先检查导入的类
         Class<?> clazz = importedClasses.get(className);
@@ -93,9 +87,6 @@ public class MethodInvocationHandler {
         }
     }
 
-    /**
-     * 调用类方法
-     */
     private Object invokeClassMethod(Class<?> clazz, String methodName, Object[] args) throws Exception {
         Method method = findBestMethod(clazz, methodName, args);
         if (method == null) {
@@ -103,7 +94,7 @@ public class MethodInvocationHandler {
         }
 
         try {
-            // 调用静态方法
+            // 调用静态方法（所有调用都假定为静态方法）
             return method.invoke(null, args);
         } catch (IllegalAccessException e) {
             throw new CannotBeChanged("Cannot access method: " + methodName, e);
@@ -118,9 +109,6 @@ public class MethodInvocationHandler {
         }
     }
 
-    /**
-     * 查找最佳匹配方法
-     */
     private Method findBestMethod(Class<?> clazz, String methodName, Object[] args) {
         Method[] methods = clazz.getMethods();
         List<Method> candidateMethods = new ArrayList<>();
@@ -160,9 +148,6 @@ public class MethodInvocationHandler {
         return null;
     }
 
-    /**
-     * 检查精确匹配
-     */
     private boolean isExactMatch(Method method, Object[] args) {
         Class<?>[] paramTypes = method.getParameterTypes();
 
@@ -178,9 +163,6 @@ public class MethodInvocationHandler {
         return true;
     }
 
-    /**
-     * 检查兼容匹配
-     */
     private boolean isCompatibleMatch(Method method, Object[] args) {
         Class<?>[] paramTypes = method.getParameterTypes();
 
@@ -196,239 +178,58 @@ public class MethodInvocationHandler {
         return true;
     }
 
-    /**
-     * 检查可变参数兼容性
-     */
     private boolean isVarArgsCompatible(Method method, Object[] args) {
-        if (!method.isVarArgs()) {
-            return false;
-        }
-
+        if (!method.isVarArgs()) return false;
         Class<?>[] paramTypes = method.getParameterTypes();
-        if (paramTypes.length == 0) {
-            return false;
-        }
+        if (args.length < paramTypes.length - 1) return false;
+        Class<?> componentType = paramTypes[paramTypes.length - 1].getComponentType();
 
-        Class<?> varParamType = paramTypes[paramTypes.length - 1];
-        if (!varParamType.isArray()) {
-            return false;
-        }
-
-        Class<?> componentType = varParamType.getComponentType();
-
-        if (paramTypes.length == 1) {
-            // 只有可变参数
-            for (Object arg : args) {
-                if (!isTypeCompatible(componentType, arg)) {
-                    return false;
-                }
-            }
-            return true;
-        } else {
-            // 固定参数 + 可变参数
-            if (args.length < paramTypes.length - 1) {
+        // 检查固定参数
+        for (int i = 0; i < paramTypes.length - 1; i++) {
+            if (!isTypeCompatible(paramTypes[i], args[i])) {
                 return false;
             }
-
-            // 检查固定参数
-            for (int i = 0; i < paramTypes.length - 1; i++) {
-                if (!isTypeCompatible(paramTypes[i], args[i])) {
-                    return false;
-                }
-            }
-
-            // 检查可变参数
-            for (int i = paramTypes.length - 1; i < args.length; i++) {
-                if (!isTypeCompatible(componentType, args[i])) {
-                    return false;
-                }
-            }
-            return true;
         }
+
+        // 检查可变参数
+        for (int i = paramTypes.length - 1; i < args.length; i++) {
+            if (!isTypeCompatible(componentType, args[i])) {
+                return false;
+            }
+        }
+        return true;
     }
 
-    /**
-     * 精确类型匹配检查
-     */
-    private boolean isExactTypeMatch(Class<?> paramType, Object arg) {
-        if (arg == null) {
-            return !paramType.isPrimitive(); // 原始类型不能为null
-        }
+    private boolean isTypeCompatible(Class<?> paramType, Object arg) {
+        if (arg == null) return !paramType.isPrimitive();
 
         if (paramType.isPrimitive()) {
-            // 原始类型匹配
             return (paramType == int.class && arg instanceof Integer) ||
                     (paramType == boolean.class && arg instanceof Boolean) ||
                     (paramType == double.class && arg instanceof Double) ||
-                    (paramType == long.class && arg instanceof Long) ||
-                    (paramType == float.class && arg instanceof Float);
+                    (paramType == long.class && arg instanceof Long);
         }
 
-        // 引用类型精确匹配
-        return paramType.equals(arg.getClass());
-    }
-
-    /**
-     * 兼容类型匹配检查
-     */
-    private boolean isTypeCompatible(Class<?> paramType, Object arg) {
-        if (arg == null) {
-            return !paramType.isPrimitive(); // 原始类型不能为null
+        if (paramType.isArray()) {
+            return true;
         }
 
-        if (paramType.isPrimitive()) {
-            // 原始类型兼容性
-            return (paramType == int.class && canConvertToInt(arg)) ||
-                    (paramType == boolean.class && canConvertToBoolean(arg)) ||
-                    (paramType == double.class && canConvertToDouble(arg)) ||
-                    (paramType == long.class && canConvertToLong(arg)) ||
-                    (paramType == float.class && canConvertToFloat(arg));
-        }
-
-        // 处理 Object 类型参数（接受任何类型）
         if (paramType == Object.class) {
             return true;
         }
 
-        // 处理数组类型
-        if (paramType.isArray()) {
-            return arg.getClass().isArray() ||
-                    paramType.getComponentType() == Object.class;
-        }
-
-        // 处理字符串和其他引用类型
-        return paramType.isInstance(arg) || canConvertToType(paramType, arg);
+        return paramType.isInstance(arg);
     }
 
-    /**
-     * 检查是否可以转换为整数
-     */
-    private boolean canConvertToInt(Object arg) {
-        return arg instanceof Number ||
-                arg instanceof Boolean ||
-                (arg instanceof String && isNumeric((String) arg));
-    }
-
-    /**
-     * 检查是否可以转换为布尔值
-     */
-    private boolean canConvertToBoolean(Object arg) {
-        return arg instanceof Boolean ||
-                arg instanceof Number ||
-                arg instanceof String;
-    }
-
-    /**
-     * 检查是否可以转换为双精度浮点数
-     */
-    private boolean canConvertToDouble(Object arg) {
-        return arg instanceof Number ||
-                (arg instanceof String && isNumeric((String) arg));
-    }
-
-    /**
-     * 检查是否可以转换为长整型
-     */
-    private boolean canConvertToLong(Object arg) {
-        return arg instanceof Number ||
-                (arg instanceof String && isNumeric((String) arg));
-    }
-
-    /**
-     * 检查是否可以转换为单精度浮点数
-     */
-    private boolean canConvertToFloat(Object arg) {
-        return arg instanceof Number ||
-                (arg instanceof String && isNumeric((String) arg));
-    }
-
-    /**
-     * 检查是否可以转换为指定类型
-     */
-    private boolean canConvertToType(Class<?> targetType, Object arg) {
-        // 字符串转换检查
-        if (targetType == String.class) {
-            return true; // 任何对象都可以转换为字符串
-        }
-
-        // 数字类型之间的转换
-        if (targetType == Integer.class && arg instanceof Number) {
-            return true;
-        }
-        if (targetType == Double.class && arg instanceof Number) {
-            return true;
-        }
-
-        return false;
-    }
-
-    /**
-     * 检查字符串是否为数字
-     */
-    private boolean isNumeric(String str) {
-        if (str == null || str.isEmpty()) {
-            return false;
-        }
-        try {
-            Double.parseDouble(str);
-            return true;
-        } catch (NumberFormatException e) {
-            return false;
-        }
-    }
-
-    /**
-     * 检查是否为有效标识符
-     */
-    private boolean isValidIdentifier(String name) {
-        if (name == null || name.isEmpty()) {
-            return false;
-        }
-
-        // 检查第一个字符
-        char firstChar = name.charAt(0);
-        if (!Character.isJavaIdentifierStart(firstChar)) {
-            return false;
-        }
-
-        // 检查剩余字符
-        for (int i = 1; i < name.length(); i++) {
-            if (!Character.isJavaIdentifierPart(name.charAt(i))) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    /**
-     * 解析参数
-     */
-    private Object[] parseArguments(String argsStr) throws Exception {
-        if (argsStr == null || argsStr.trim().isEmpty()) {
-            return new Object[0];
-        }
-
-        String[] argStrings = splitArguments(argsStr);
-        Object[] args = new Object[argStrings.length];
-
-        for (int i = 0; i < argStrings.length; i++) {
-            args[i] = evaluateExpression(argStrings[i].trim());
-        }
-
-        return args;
-    }
-
-    /**
-     * 分割参数字符串
-     */
     private String[] splitArguments(String argsStr) {
+        if (argsStr == null) return new String[0];
         List<String> parts = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         boolean inQuotes = false;
         boolean inEscape = false;
 
-        for (char c : argsStr.toCharArray()) {
+        for (int i = 0; i < argsStr.length(); i++) {
+            char c = argsStr.charAt(i);
             if (inEscape) {
                 current.append(c);
                 inEscape = false;
@@ -453,50 +254,88 @@ public class MethodInvocationHandler {
     }
 
     /**
-     * 计算表达式
+     * 把参数字符串解析为 Object[]（会对每个 part 调用 runtime.evaluateExpression）
+     * 例如: "\"Hello\"" -> Java String Hello (无双引号)
+     */
+    private Object[] parseArgumentsAsObjects(String argsStr) throws Exception {
+        if (argsStr == null || argsStr.trim().isEmpty()) return new Object[0];
+
+        String[] parts = splitArguments(argsStr);
+        Object[] args = new Object[parts.length];
+
+        for (int i = 0; i < parts.length; i++) {
+            String part = parts[i].trim();
+            // 使用 runtime 的求值（兼容带/不带行号的重载）
+            args[i] = evaluateExpression(part, -1);
+        }
+        return args;
+    }
+
+    // ========= 修改点：增加两个重载 evaluateExpression 方法，兼容新版 runtime =========
+    /**
+     * 兼容旧调用：单参数版本委托到带行号版本（-1 表示未知行号）
      */
     private Object evaluateExpression(String expr) throws Exception {
-        // 委托给runtime的表达式求值功能
-        return runtime.evaluateExpression(expr);
+        return evaluateExpression(expr, -1);
     }
 
     /**
-     * 获取方法参数信息（用于调试和错误信息）
+     * 将行号传递到 runtime（新版 VolcanoRuntime 要求行号参数）
      */
-    public String getMethodSignature(Class<?> clazz, String methodName) {
-        Method[] methods = clazz.getMethods();
-        List<String> signatures = new ArrayList<>();
+    private Object evaluateExpression(String expr, int lineNumber) throws Exception {
+        return runtime.evaluateExpression(expr, lineNumber);
+    }
+    // ========= 修改点结束 =========
 
-        for (Method method : methods) {
-            if (method.getName().equals(methodName)) {
-                Class<?>[] paramTypes = method.getParameterTypes();
-                StringBuilder signature = new StringBuilder();
-                signature.append(methodName).append("(");
+    // 新增：标识符校验（与其它处理类一致）
+    private boolean isValidIdentifier(String name) {
+        if (name == null || name.isEmpty()) {
+            return false;
+        }
+        char firstChar = name.charAt(0);
+        if (!Character.isJavaIdentifierStart(firstChar)) {
+            return false;
+        }
+        for (int i = 1; i < name.length(); i++) {
+            if (!Character.isJavaIdentifierPart(name.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
 
-                for (int i = 0; i < paramTypes.length; i++) {
-                    if (i > 0) signature.append(", ");
-                    signature.append(getTypeName(paramTypes[i]));
-                }
+    // 新增：精确类型匹配检查，用于 isExactMatch
+    private boolean isExactTypeMatch(Class<?> paramType, Object arg) {
+        // null 只能匹配非原始类型参数
+        if (arg == null) {
+            return !paramType.isPrimitive();
+        }
 
-                if (method.isVarArgs()) {
-                    signature.append("...");
-                }
+        // 如果参数类型本身能接受该对象，则直接匹配
+        if (paramType.isInstance(arg)) {
+            return true;
+        }
 
-                signature.append(")");
-                signatures.add(signature.toString());
+        // 如果 paramType 是原始类型，检查包装类型是否匹配
+        if (paramType.isPrimitive()) {
+            Class<?> wrapper = getWrapperClass(paramType);
+            if (wrapper != null && wrapper.isInstance(arg)) {
+                return true;
             }
         }
 
-        return String.join(" or ", signatures);
+        return false;
     }
 
-    /**
-     * 获取类型名称
-     */
-    private String getTypeName(Class<?> type) {
-        if (type.isArray()) {
-            return getTypeName(type.getComponentType()) + "[]";
-        }
-        return type.getSimpleName();
+    private Class<?> getWrapperClass(Class<?> primitive) {
+        if (primitive == int.class) return Integer.class;
+        if (primitive == double.class) return Double.class;
+        if (primitive == boolean.class) return Boolean.class;
+        if (primitive == long.class) return Long.class;
+        if (primitive == float.class) return Float.class;
+        if (primitive == char.class) return Character.class;
+        if (primitive == byte.class) return Byte.class;
+        if (primitive == short.class) return Short.class;
+        return primitive;
     }
 }

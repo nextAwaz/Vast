@@ -4,10 +4,6 @@ import java.io.*;
 import java.nio.file.*;
 import java.util.*;
 
-/**
- * VolcanoScript 命令行接口
- * 支持多种命令：run, eval, shell, help, version, list, info
- */
 public class VolcanoCLI {
 
     public static void main(String[] args) {
@@ -183,104 +179,71 @@ public class VolcanoCLI {
 
         println("Sys:");
         println("  print(message)         - Print to console");
-        println("  error(message)         - Print error");
-        println("  sleep(ms)              - Sleep milliseconds");
-        println("  time()                 - Current time in ms");
-        println("  exit(code)             - Exit program");
-        println("  input()                - Read input (returns value)");
-        println("  input(\"prompt\")        - Show prompt and read input");
-        println("  input(\"prompt\" + var x) - Show prompt and store in variable");
-        println("  input(\"prompt\" + var x + var y) - Multi-variable input (space separated)");
+        println("  error(message)         - Print error to console");
+        println("  sleep(ms)              - Sleep for milliseconds");
+        println("  time()                 - Get current time in ms");
+        println("  exit(code)             - Exit with code");
+        println("  input(prompt)          - Read input with prompt");
 
-        println("Loop Syntax:");
-        println("  loop(5)              - Loop 5 times");
-        println("  loop(true)           - Infinite loop");
-        println("  loop(false)          - Skip loop");
-        println("  loop(x > 0)          - Loop while condition is true");
-        println("  loop(var)            - Loop based on variable value");
+        println("Time:");
+        println("  currentMillis()        - Get current time in ms");
+        println("  formatDate(date, fmt)  - Format date");
 
-        println("\nTime:");
-        println("  wait(seconds)     - Wait seconds");
-        println("  now()             - Current time string");
-        println("  timestamp()       - Current timestamp");
-        println("  format(ts)        - Format timestamp");
+        println("Array:");
+        println("  create(size)           - Create array");
+        println("  get(array, index)      - Get element");
+        println("  set(array, index, val) - Set element");
 
-        println("\nArray:");
-        println("  length(array)     - Get array length");
-        println("  contains(array, value) - Check if array contains value");
-        println("  create(size)      - Create new array");
-        println("  get(array, index) - Get element at index");
-        println("  set(array, index, value) - Set element at index");
+        println("Ops:");
+        println("  and(a, b)              - Logical AND");
+        println("  or(a, b)               - Logical OR");
+        println("  not(a)                 - Logical NOT");
+        println("  concat(a, b)           - String concatenation");
+        println("  repeat(str, n)         - Repeat string");
+        println("  equals(a, b)           - Equality check");
+        println("  notEquals(a, b)        - Inequality check");
 
-        println("\nOperator Description:");
-        println("  +  : Number addition or string concatenation");
-        println("  ++ : Number concatenation (12++14 → 1214) or increment (10++ → 11)");
-        println("  -  : Number subtraction");
-        println("  *  : Number multiplication");
-        println("  /  : Number division");
-        println("  %  : Modulo operation");
-        println("  == : Equality comparison");
-        println("  != : Inequality comparison");
-        println("  >, <, >=, <= : Relational comparison");
-        println("  && : Logical AND");
-        println("  || : Logical OR");
-
-        println("\nDataType (Auto-imported):");
-        println("  String Operations:");
-        println("    strLength(str)              - Get string length");
-        println("    strSubstring(str, start, end) - Get substring");
-        println("    strToUpper(str)             - Convert to uppercase");
-        println("    strToLower(str)             - Convert to lowercase");
-        println("    strContains(str, search)    - Check if contains substring");
-        println("    strReplace(str, old, new)   - Replace substring");
-        println("    strTrim(str)                - Trim leading and trailing spaces");
-
-        println("  Number Operations (Replaces Math class):");
-        println("    numParseInt(str)            - Parse string to integer");
-        println("    numParseDouble(str)         - Parse string to double");
-        println("    numAbs(value)               - Absolute value");
-        println("    numMax(a, b)                - Maximum value");
-        println("    numMin(a, b)                - Minimum value");
-        println("    numRound(value)             - Round to nearest integer");
-        println("    numCeil(value)              - Round up");
-        println("    numFloor(value)             - Round down");
-        println("    numSqrt(value)              - Square root");
-        println("    numPow(base, exp)           - Power operation");
-        println("    numRandom(max)              - Random number");
-
-        println("  Boolean Operations:");
-        println("    boolParse(str)              - Parse string to boolean");
-        println("    boolToString(value)         - Convert to string");
-        println("    boolAnd(a, b)               - Logical AND");
-        println("    boolOr(a, b)                - Logical OR");
-        println("    boolNot(a)                  - Logical NOT");
-        println("    boolXor(a, b)               - Logical XOR");
+        println("DataType:");
+        println("  strLength(str)         - String length");
+        println("  strSubstring(str, s, e)- Substring");
+        println("  strToUpper(str)        - To upper case");
+        println("  strToLower(str)        - To lower case");
+        println("  strContains(str, s)    - Contains check");
+        println("  strReplace(str, o, n)  - Replace string");
+        println("  strTrim(str)           - Trim string");
+        println("  numParseInt(str)       - Parse int");
+        println("  numParseDouble(str)    - Parse double");
+        println("  numAbs(value)          - Absolute value");
+        println("  numMax(a, b)           - Max");
+        println("  numMin(a, b)           - Min");
+        println("  numRound(value)        - Round");
+        println("  numCeil(value)         - Ceil");
+        println("  numFloor(value)        - Floor");
+        println("  numSqrt(value)         - Square root");
+        println("  numPow(base, exp)      - Power");
+        println("  numRandom(max)         - Random number");
+        println("  boolParse(str)         - Parse boolean");
+        println("  boolToString(value)    - Convert to string");
+        println("  boolAnd(a, b)          - Logical AND");
+        println("  boolOr(a, b)           - Logical OR");
+        println("  boolNot(a)             - Logical NOT");
+        println("  boolXor(a, b)          - Logical XOR");
 
         println("  Type Conversion:");
-        println("    typeOf(obj)                 - Get type name");
-        println("    toString(obj)               - Convert to string");
-        println("    toInt(obj)                  - Convert to integer");
-        println("    toDouble(obj)               - Convert to double");
-        println("    toBoolean(obj)              - Convert to boolean");
+        println("    typeOf(obj)          - Get type name");
+        println("    toString(obj)        - Convert to string");
+        println("    toInt(obj)           - Convert to integer");
+        println("    toDouble(obj)        - Convert to double");
+        println("    toBoolean(obj)       - Convert to boolean");
 
         println("  Array Operations:");
-        println("    arrLength(array)            - Get array length");
-        println("    arrContains(array, value)   - Check if array contains value");
-        println("    arrCreate(size)             - Create new array");
-        println("    arrGet(array, index)        - Get array element");
+        println("    arrLength(array)     - Get array length");
+        println("    arrContains(array, value) - Check if array contains value");
+        println("    arrCreate(size)      - Create new array");
+        println("    arrGet(array, index) - Get array element");
         println("    arrSet(array, index, value) - Set array element");
         println("    arrSlice(array, start, end) - Get array slice");
-
-        println("\nOps:");
-        println("  and(a, b)         - Logical AND");
-        println("  or(a, b)          - Logical OR");
-        println("  not(a)            - Logical NOT");
-        println("  concat(a, b)      - String concatenation");
-        println("  repeat(str, n)    - Repeat string");
-        println("  equals(a, b)      - Deep equality check");
-        println("  notEquals(a, b)   - Deep inequality check");
     }
-
 
     private static void handleInfoCommand(String[] args) {
         if (args.length < 2) {

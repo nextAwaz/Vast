@@ -3,18 +3,14 @@ package com.volcano.vm;
 import java.lang.reflect.Method;
 import java.lang.reflect.Field;
 import java.util.*;
+
 import com.volcano.internal.exception.*;
 
-/**
- * Do语句处理器 - 专门处理do语句的所有逻辑
- * 格式: do([className])([methodName])([arguments])
- */
 public class DoStatementHandler {
 
     private final VolcanoRuntime runtime;
     private final Map<String, Class<?>> importedClasses;
     private final Map<String, Object> variables;
-    private MethodInvocationHandler methodInvocationHandler;//处理外部Method
 
     public DoStatementHandler(VolcanoRuntime runtime,
                               Map<String, Class<?>> importedClasses,
@@ -24,9 +20,6 @@ public class DoStatementHandler {
         this.variables = variables;
     }
 
-    /**
-     * 执行do语句
-     */
     public Object executeDoStatement(String className, String methodName, String arguments) throws Exception {
         // 验证基本格式
         validateDoStatementFormat(className, methodName, arguments);
@@ -46,13 +39,7 @@ public class DoStatementHandler {
         }
     }
 
-    /**
-     * 验证do语句格式
-     */
     private void validateDoStatementFormat(String className, String methodName, String arguments) {
-        // 三个括号都必须存在（由解析器保证）
-        // 这里主要验证逻辑约束
-
         if (className.isEmpty() && methodName.isEmpty()) {
             throw new NotGrammarException("Do statement must specify either class or method when both are empty");
         }
@@ -62,9 +49,6 @@ public class DoStatementHandler {
         }
     }
 
-    /**
-     * 将参数数组构建为参数字符串
-     */
     private String buildArgumentsString(Object[] args) {
         if (args == null || args.length == 0) {
             return "";
@@ -82,9 +66,6 @@ public class DoStatementHandler {
         return sb.toString();
     }
 
-    /**
-     * 处理对外部程序的操作
-     */
     private Object handleExternalProgramOperation(String methodName, String[] args) throws Exception {
         if (methodName.isEmpty()) {
             throw new NotGrammarException("Method name cannot be empty when no class is specified");
@@ -96,13 +77,25 @@ public class DoStatementHandler {
             throw new PassParameterException("No external program is available for do statement");
         }
 
+        // 新功能：如果外部程序实现了ExternalVolcanoExtension，调用init()初始化
+        if (externalProgram instanceof ExternalVolcanoExtension) {
+            ((ExternalVolcanoExtension) externalProgram).init();
+        }
+
         // 调用外部程序的方法
         return invokeExternalMethod(externalProgram, methodName, args);
     }
 
-    /**
-     * 处理类的变量操作
-     */
+    private Object invokeExternalMethod(Object externalProgram, String methodName, String[] args) throws Exception {
+        Class<?> clazz = externalProgram.getClass();
+        Object[] evaluatedArgs = evaluateArguments(args);
+        Method method = findBestMethod(clazz, methodName, evaluatedArgs);
+        if (method == null) {
+            throw NonExistentObject.methodNotFound(clazz.getSimpleName(), methodName);
+        }
+        return method.invoke(externalProgram, evaluatedArgs);
+    }
+
     private Object handleClassVariableOperation(String className, String[] args) throws Exception {
         Class<?> clazz = findClass(className);
 
@@ -121,9 +114,6 @@ public class DoStatementHandler {
         return results.get(results.size() - 1).getValue();
     }
 
-    /**
-     * 处理变量操作
-     */
     private VariableOperationResult processVariableOperation(Class<?> clazz, String arg) throws Exception {
         if (arg.startsWith("var ")) {
             // 声明新变量
@@ -134,9 +124,6 @@ public class DoStatementHandler {
         }
     }
 
-    /**
-     * 处理变量声明
-     */
     private VariableOperationResult handleVariableDeclaration(Class<?> clazz, String declaration) throws Exception {
         String[] parts = declaration.split("=", 2);
         if (parts.length != 2) {
@@ -160,9 +147,6 @@ public class DoStatementHandler {
         }
     }
 
-    /**
-     * 处理变量赋值
-     */
     private VariableOperationResult handleVariableAssignment(Class<?> clazz, String assignment) throws Exception {
         String[] parts = assignment.split("=", 2);
         if (parts.length != 2) {
@@ -170,197 +154,120 @@ public class DoStatementHandler {
         }
 
         String varName = parts[0].trim();
-        String valueExpr = parts[1].trim();
+        Object value = evaluateExpression(parts[1].trim());
 
-        // 如果值为空，保持原值
-        if (valueExpr.isEmpty()) {
-            Object currentValue = getStaticField(clazz, varName);
-            return new VariableOperationResult(varName, currentValue, false);
-        }
-
-        Object value = evaluateExpression(valueExpr);
         return setStaticField(clazz, varName, value);
     }
 
-    /**
-     * 设置静态字段
-     */
     private VariableOperationResult setStaticField(Class<?> clazz, String fieldName, Object value) throws Exception {
         try {
             Field field = clazz.getDeclaredField(fieldName);
             field.setAccessible(true);
-
-            // 类型转换
             Object convertedValue = convertValueToFieldType(value, field.getType());
             field.set(null, convertedValue);
-
             return new VariableOperationResult(fieldName, convertedValue, true);
-
         } catch (NoSuchFieldException e) {
-            throw NonExistentObject.fieldNotFound(clazz.getSimpleName(), fieldName);
+            throw new NotGrammarException("Field not found: " + fieldName);
+        } catch (IllegalAccessException e) {
+            throw new CannotBeChanged("Cannot access field: " + fieldName, e);
         }
     }
 
-    /**
-     * 获取静态字段值
-     */
-    private Object getStaticField(Class<?> clazz, String fieldName) throws Exception {
-        try {
-            Field field = clazz.getDeclaredField(fieldName);
-            field.setAccessible(true);
-            return field.get(null);
-        } catch (NoSuchFieldException e) {
-            throw NonExistentObject.fieldNotFound(clazz.getSimpleName(), fieldName);
-        }
-    }
-
-    /**
-     * 处理方法调用
-     */
     private Object handleMethodCall(String className, String methodName, String[] args) throws Exception {
-        // 构建参数字符串
-        String argsStr = String.join(", ", args);
-        return methodInvocationHandler.invokeMethod(className, methodName, argsStr);
-    }
-
-    /**
-     * 调用外部程序方法
-     */
-    private Object invokeExternalMethod(Object externalProgram, String methodName, String[] args) throws Exception {
+        Class<?> clazz = findClass(className);
         Object[] evaluatedArgs = evaluateArguments(args);
-
-        // 使用反射调用外部程序方法
-        Method method = findBestMethod(externalProgram.getClass(), methodName, evaluatedArgs);
+        Method method = findBestMethod(clazz, methodName, evaluatedArgs);
         if (method == null) {
-            throw NonExistentObject.methodNotFound(externalProgram.getClass().getSimpleName(), methodName);
+            throw NonExistentObject.methodNotFound(className, methodName);
         }
-
-        return method.invoke(externalProgram, evaluatedArgs);
+        return method.invoke(null, evaluatedArgs);
     }
 
-    /**
-     * 查找类
-     */
     private Class<?> findClass(String className) throws Exception {
         Class<?> clazz = importedClasses.get(className);
-        if (clazz == null) {
-            clazz = VolcanoVM.BUILTIN_CLASSES.get(className);
-            if (clazz == null) {
-                try {
-                    clazz = Class.forName(className);
-                } catch (ClassNotFoundException e) {
-                    throw NonExistentObject.classNotFound(className);
+        if (clazz != null) return clazz;
+        clazz = VolcanoVM.BUILTIN_CLASSES.get(className);
+        if (clazz != null) return clazz;
+        try {
+            return Class.forName(className);
+        } catch (ClassNotFoundException e) {
+            throw NonExistentExternalLibraryException.forLibrary(className, e);
+        }
+    }
+
+    private Method findBestMethod(Class<?> clazz, String methodName, Object[] args) {
+        Method[] methods = clazz.getMethods();
+        Method bestMatch = null;
+        int bestScore = Integer.MAX_VALUE;
+
+        for (Method method : methods) {
+            if (method.getName().equals(methodName)) {
+                Class<?>[] paramTypes = method.getParameterTypes();
+                if (paramTypes.length == args.length || (method.isVarArgs() && paramTypes.length - 1 <= args.length)) {
+                    int score = calculateMatchScore(paramTypes, args, method.isVarArgs());
+                    if (score < bestScore) {
+                        bestScore = score;
+                        bestMatch = method;
+                    }
                 }
             }
         }
-        return clazz;
+        return bestMatch;
     }
 
-    /**
-     * 查找最佳匹配方法
-     */
-    private Method findBestMethod(Class<?> clazz, String methodName, Object[] args) {
-        Method[] methods = clazz.getMethods();
-        List<Method> candidateMethods = new ArrayList<>();
-
-        // 收集所有同名方法
-        for (Method method : methods) {
-            if (method.getName().equals(methodName)) {
-                candidateMethods.add(method);
+    private int calculateMatchScore(Class<?>[] paramTypes, Object[] args, boolean isVarArgs) {
+        int score = 0;
+        int paramLength = paramTypes.length;
+        if (isVarArgs) paramLength--;
+        for (int i = 0; i < paramLength; i++) {
+            score += getTypeMatchScore(paramTypes[i], args[i].getClass());
+        }
+        if (isVarArgs) {
+            Class<?> varArgType = paramTypes[paramTypes.length - 1].getComponentType();
+            for (int i = paramLength; i < args.length; i++) {
+                score += getTypeMatchScore(varArgType, args[i].getClass());
             }
         }
-
-        if (candidateMethods.isEmpty()) {
-            return null;
-        }
-
-        // 寻找参数最匹配的方法
-        for (Method method : candidateMethods) {
-            if (isArgsCompatible(method.getParameterTypes(), args)) {
-                return method;
-            }
-        }
-
-        // 尝试可变参数匹配
-        for (Method method : candidateMethods) {
-            if (isVarArgsCompatible(method, args)) {
-                return method;
-            }
-        }
-
-        return null;
+        return score;
     }
 
-    /**
-     * 检查参数兼容性
-     */
-    private boolean isArgsCompatible(Class<?>[] paramTypes, Object[] args) {
-        if (paramTypes.length != args.length) {
-            return false;
-        }
+    private int getTypeMatchScore(Class<?> paramType, Class<?> argType) {
+        if (paramType.equals(argType)) return 0;
+        if (paramType.isAssignableFrom(argType)) return 1;
+        if (paramType.isPrimitive() && argType.equals(getWrapperClass(paramType))) return 2;
+        return Integer.MAX_VALUE;
+    }
 
-        for (int i = 0; i < paramTypes.length; i++) {
+    private Class<?> getWrapperClass(Class<?> primitive) {
+        if (primitive == int.class) return Integer.class;
+        if (primitive == double.class) return Double.class;
+        if (primitive == boolean.class) return Boolean.class;
+        // ... other primitives
+        return primitive;
+    }
+
+    private boolean isVarArgsCompatible(Method method, Object[] args) {
+        if (!method.isVarArgs()) return false;
+        Class<?>[] paramTypes = method.getParameterTypes();
+        if (args.length < paramTypes.length - 1) return false;
+        Class<?> componentType = paramTypes[paramTypes.length - 1].getComponentType();
+
+        // 检查固定参数
+        for (int i = 0; i < paramTypes.length - 1; i++) {
             if (!isTypeCompatible(paramTypes[i], args[i])) {
+                return false;
+            }
+        }
+
+        // 检查可变参数
+        for (int i = paramTypes.length - 1; i < args.length; i++) {
+            if (!isTypeCompatible(componentType, args[i])) {
                 return false;
             }
         }
         return true;
     }
 
-    /**
-     * 检查可变参数兼容性
-     */
-    private boolean isVarArgsCompatible(Method method, Object[] args) {
-        if (!method.isVarArgs()) {
-            return false;
-        }
-
-        Class<?>[] paramTypes = method.getParameterTypes();
-        if (paramTypes.length == 0) {
-            return false;
-        }
-
-        Class<?> varParamType = paramTypes[paramTypes.length - 1];
-        if (!varParamType.isArray()) {
-            return false;
-        }
-
-        Class<?> componentType = varParamType.getComponentType();
-
-        if (paramTypes.length == 1) {
-            // 只有可变参数
-            for (Object arg : args) {
-                if (!isTypeCompatible(componentType, arg)) {
-                    return false;
-                }
-            }
-            return true;
-        } else {
-            // 固定参数 + 可变参数
-            if (args.length < paramTypes.length - 1) {
-                return false;
-            }
-
-            // 检查固定参数
-            for (int i = 0; i < paramTypes.length - 1; i++) {
-                if (!isTypeCompatible(paramTypes[i], args[i])) {
-                    return false;
-                }
-            }
-
-            // 检查可变参数
-            for (int i = paramTypes.length - 1; i < args.length; i++) {
-                if (!isTypeCompatible(componentType, args[i])) {
-                    return false;
-                }
-            }
-            return true;
-        }
-    }
-
-    /**
-     * 检查类型兼容性
-     */
     private boolean isTypeCompatible(Class<?> paramType, Object arg) {
         if (paramType.isPrimitive()) {
             return (paramType == int.class && arg instanceof Integer) ||
@@ -380,9 +287,6 @@ public class DoStatementHandler {
         return paramType.isInstance(arg);
     }
 
-    /**
-     * 解析参数
-     */
     private String[] parseArguments(String argsStr) {
         if (argsStr.trim().isEmpty()) {
             return new String[0];
@@ -417,9 +321,6 @@ public class DoStatementHandler {
         return args.toArray(new String[0]);
     }
 
-    /**
-     * 计算参数值
-     */
     private Object[] evaluateArguments(String[] args) throws Exception {
         Object[] result = new Object[args.length];
         for (int i = 0; i < args.length; i++) {
@@ -428,17 +329,23 @@ public class DoStatementHandler {
         return result;
     }
 
+    // ========= 修改点开始：添加支持带行号的 evaluateExpression 重载 =========
     /**
-     * 计算表达式
+     * Evaluate an expression, delegating to VolcanoRuntime.
+     * Backward-compatible single-arg version delegates to two-arg with unknown line (-1).
      */
     private Object evaluateExpression(String expr) throws Exception {
-        // 使用runtime的表达式求值功能
-        return runtime.evaluateExpression(expr);
+        return evaluateExpression(expr, -1);
     }
 
     /**
-     * 值类型转换
+     * New overload that accepts a line number and forwards to runtime.evaluateExpression(expr, lineNumber)
      */
+    private Object evaluateExpression(String expr, int lineNumber) throws Exception {
+        return runtime.evaluateExpression(expr, lineNumber);
+    }
+    // ========= 修改点结束 =========
+
     private Object convertValueToFieldType(Object value, Class<?> fieldType) {
         if (value == null) {
             return getDefaultValue(fieldType);
@@ -477,9 +384,6 @@ public class DoStatementHandler {
         return value; // 无法转换，返回原值
     }
 
-    /**
-     * 获取默认值
-     */
     private Object getDefaultValue(Class<?> type) {
         if (type == int.class) return 0;
         if (type == double.class) return 0.0;
@@ -492,18 +396,6 @@ public class DoStatementHandler {
         return null;
     }
 
-    /**
-     * 检查是否为独立的do语句（不是赋值语句的一部分）
-     */
-    private boolean isStandaloneDoStatement() {
-        // 这个需要通过调用上下文来判断
-        // 简化实现：假设总是独立语句
-        return true;
-    }
-
-    /**
-     * 变量操作结果
-     */
     private static class VariableOperationResult {
         private final String variableName;
         private final Object value;

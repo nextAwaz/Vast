@@ -1,6 +1,8 @@
 package com.volcano.vm;
 
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.lang.reflect.*;
 import com.volcano.internal.*;
 import com.volcano.internal.exception.*;
@@ -8,6 +10,7 @@ import com.volcano.internal.exception.*;
 public class VolcanoRuntime {
     private final Map<String, Class<?>> importedClasses;
     private final Map<String, Object> variables;
+    private final Map<String, String> variableTypes = new HashMap<>(); // 存储静态类型声明（如 "int","double","boolean","string"）
     private final Stack<LoopContext> loopStack = new Stack<>();
 
     private List<Instruction> instructions = new ArrayList<>();
@@ -19,6 +22,9 @@ public class VolcanoRuntime {
     private Object giveResult = null;// 用于存储give语句的结果
     private DoStatementHandler doStatementHandler;//do语句的功能引入
     private MethodInvocationHandler methodInvocationHandler;//处理外部Method
+
+    // 未初始化变量哨兵
+    private static final Object UNINITIALIZED = new Object();
 
     public VolcanoRuntime(Map<String, Class<?>> importedClasses, Map<String, Object> variables) {
         this.importedClasses = importedClasses;
@@ -56,6 +62,12 @@ public class VolcanoRuntime {
     }
 
     public void execute(List<String> sourceLines) throws Exception {
+        // 新功能: 初始化外部程序（如果存在）
+        Object external = VolcanoVM.getGlobal("EXTERNAL_PROGRAM");
+        if (external instanceof ExternalVolcanoExtension) {
+            ((ExternalVolcanoExtension) external).init();
+        }
+
         // 预编译为指令序列
         compile(sourceLines);
 
@@ -64,6 +76,11 @@ public class VolcanoRuntime {
             Instruction instr = instructions.get(pc);
             executeInstruction(instr);
             pc++;
+        }
+
+        // 新功能: 清理外部程序（如果存在）
+        if (external instanceof ExternalVolcanoExtension) {
+            ((ExternalVolcanoExtension) external).cleanup();
         }
     }
 
@@ -106,6 +123,9 @@ public class VolcanoRuntime {
             } else if (trimmedLine.startsWith("do")) {
                 DoInstructionData data = parseDoStatement(trimmedLine);
                 instructions.add(new Instruction(OpCode.DO, "", i, indent, data));
+            } else if (trimmedLine.startsWith("change ")) {
+                // 新增 change 语句
+                instructions.add(new Instruction(OpCode.CHANGE, trimmedLine.substring(7).trim(), i, indent));
             } else if (trimmedLine.contains("=") && !trimmedLine.contains("(") && !trimmedLine.contains(")")) {
                 instructions.add(new Instruction(OpCode.VAR_ASSIGN, trimmedLine, i, indent));
             } else {
@@ -146,8 +166,13 @@ public class VolcanoRuntime {
             case DO:
                 handleDoStatement((DoInstructionData) instr.extraData);
                 break;
+            case CHANGE:
+                handleChangeStatement(instr.operand, instr.lineNumber);
+                break;
         }
     }
+
+
 
     /**
      * 解析give语句
@@ -258,7 +283,11 @@ public class VolcanoRuntime {
             if (!variables.containsKey(varName)) {
                 throw NonExistentObject.variableNotFound(varName);
             }
-            variablesToGive.put(varName, variables.get(varName));
+            Object val = variables.get(varName);
+            if (val == UNINITIALIZED) {
+                throw new NullTokenException(varName, "give statement");
+            }
+            variablesToGive.put(varName, val);
         }
 
         // 存储give结果，供外部程序获取
@@ -369,13 +398,10 @@ public class VolcanoRuntime {
     }
 
     private void handleImport(String className) throws Exception {
+        // 类似原有逻辑
         Class<?> clazz = VolcanoVM.BUILTIN_CLASSES.get(className);
         if (clazz == null) {
-            try {
-                clazz = Class.forName(className);
-            } catch (ClassNotFoundException e) {
-                throw NonExistentExternalLibraryException.forLibrary(className, e);
-            }
+            clazz = Class.forName(className);
         }
         importedClasses.put(className, clazz);
     }
@@ -384,17 +410,55 @@ public class VolcanoRuntime {
         handleVarDecl(declaration, -1);
     }
 
+    /**
+     * 处理 var 声明，支持：
+     *   name
+     *   name = expr
+     *   (type) name
+     *   (type) name = expr
+     */
     private void handleVarDecl(String declaration, int lineNumber) throws Exception {
-        String[] parts = declaration.split("=", 2);
-        if (parts.length != 2) {
-            throw NotGrammarException.invalidStatementStructure("variable declaration", "Missing assignment", lineNumber);
+        // 支持 (type) 前缀
+        // 正则: optional (type) 变量名 optional = expr
+        Pattern p = Pattern.compile("^(?:\\s*\\(([^)]+)\\)\\s*)?([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?:=\\s*(.+))?$");
+        Matcher m = p.matcher(declaration);
+        if (!m.matches()) {
+            throw NotGrammarException.invalidStatementStructure("variable declaration", "Invalid declaration: " + declaration, lineNumber);
         }
 
-        String varName = parts[0].trim();
-        String expr = parts[1].trim();
+        String typeName = m.group(1); // may be null
+        String varName = m.group(2);
+        String expr = m.group(3); // may be null
+
+        if (expr == null) {
+            // 声明但未赋值
+            variables.put(varName, UNINITIALIZED);
+            if (typeName != null) {
+                variableTypes.put(varName, normalizeTypeName(typeName));
+            }
+            debugPrint("@ Var declared: %s (type=%s) uninitialized", varName, typeName);
+            return;
+        }
 
         Object value = evaluateExpression(expr, lineNumber);
+
+        if (value == UNINITIALIZED) {
+            throw new NullTokenException(varName, "variable declaration");
+        }
+
+        if (typeName != null) {
+            String normType = normalizeTypeName(typeName);
+            // 静态类型要求严格匹配（不允许隐式转换）
+            if (!isExactTypeMatchToType(value, normType)) {
+                throw new NotGrammarException("Type mismatch: cannot assign value of type " +
+                        (value != null ? value.getClass().getSimpleName() : "null") +
+                        " to variable '" + varName + "' declared as " + normType);
+            }
+            variableTypes.put(varName, normType);
+        }
+
         variables.put(varName, value);
+        debugPrint("@ Var declared: %s = %s (type=%s)", varName, value, typeName);
     }
 
     private void handleVarAssign(String assignment) throws Exception {
@@ -411,18 +475,467 @@ public class VolcanoRuntime {
         String expr = parts[1].trim();
 
         Object value = evaluateExpression(expr, lineNumber);
+
+        if (value == UNINITIALIZED) {
+            throw new NullTokenException(varName, "assignment");
+        }
+
+        // 如果变量已被声明为静态类型，强制类型检查（严格匹配）
+        if (variableTypes.containsKey(varName)) {
+            String expectedType = variableTypes.get(varName);
+            if (!isExactTypeMatchToType(value, expectedType)) {
+                throw new NotGrammarException("Type mismatch: cannot assign value of type " +
+                        (value != null ? value.getClass().getSimpleName() : "null") +
+                        " to variable '" + varName + "' declared as " + expectedType);
+            }
+        }
+
         variables.put(varName, value);
+        debugPrint("@ Var assign: %s = %s", varName, value);
     }
 
     /**
-     * 增强的字符串解析方法 - 修正版
+     * 增加 change 语句处理： change targetVar::targetType = sourceVar::sourceType
+     * 将 sourceVar 的值按 sourceType 解析并转换为 targetType，赋给 targetVar 并标记 targetVar 的静态类型为 targetType。
      */
-    Object evaluateExpression(String expr) throws Exception {
-        return evaluateExpression(expr, -1); // 默认使用-1表示未知行号
+    private void handleChangeStatement(String operand, int lineNumber) throws Exception {
+        // operand 已经是 "target::t1 = source::t2" 形式，做严格解析
+        Pattern p = Pattern.compile("^([a-zA-Z_][a-zA-Z0-9_]*)::([a-zA-Z]+)\\s*=\\s*([a-zA-Z_][a-zA-Z0-9_]*)::([a-zA-Z]+)$");
+        Matcher m = p.matcher(operand);
+        if (!m.find()) {
+            throw NotGrammarException.invalidStatementStructure("change statement", "Invalid syntax: " + operand, lineNumber);
+        }
+
+        String targetVar = m.group(1);
+        String targetType = normalizeTypeName(m.group(2));
+        String sourceVar = m.group(3);
+        String sourceType = normalizeTypeName(m.group(4));
+
+        // 检查 sourceVar 存在且已初始化
+        if (!variables.containsKey(sourceVar)) {
+            throw NonExistentObject.variableNotFound(sourceVar);
+        }
+        Object sourceVal = variables.get(sourceVar);
+        if (sourceVal == UNINITIALIZED) {
+            throw new NullTokenException(sourceVar, "change statement");
+        }
+
+        // 如果 sourceVar 有静态类型声明，确认它与提供的 sourceType 一致（否则可能是用户错误）
+        if (variableTypes.containsKey(sourceVar)) {
+            String declaredSourceType = variableTypes.get(sourceVar);
+            if (!declaredSourceType.equals(sourceType)) {
+                throw new NotGrammarException("Source variable '" + sourceVar + "' declared as " + declaredSourceType +
+                        " but change specified source type " + sourceType);
+            }
+        }
+
+        // 尝试把 sourceVal 转换为 targetType
+        Object converted = convertToType(sourceVal, targetType);
+        if (converted == null && targetType.equals("string")) {
+            converted = "null";
+        }
+
+        // 存储到 targetVar 并设置静态类型
+        variables.put(targetVar, converted);
+        variableTypes.put(targetVar, targetType);
+
+        debugPrint("@ Change: %s set to %s (type %s) from %s::%s", targetVar, converted, targetType, sourceVar, sourceType);
     }
 
+    /**
+     * 将对象转换为指定的目标类型（严格转换，仅能在可预见的情形下转换）
+     */
+    private Object convertToType(Object value, String targetType) {
+        if (targetType == null) return value;
+
+        switch (targetType) {
+            case "int":
+                if (value instanceof Integer) return value;
+                if (value instanceof Number) return ((Number) value).intValue();
+                if (value instanceof Boolean) return (Boolean) value ? 1 : 0;
+                if (value instanceof String) {
+                    try { return Integer.parseInt((String) value); }
+                    catch (NumberFormatException e) { throw new NotGrammarException("Cannot convert string to int: " + value); }
+                }
+                break;
+            case "double":
+                if (value instanceof Double) return value;
+                if (value instanceof Number) return ((Number) value).doubleValue();
+                if (value instanceof Boolean) return (Boolean) value ? 1.0 : 0.0;
+                if (value instanceof String) {
+                    try { return Double.parseDouble((String) value); }
+                    catch (NumberFormatException e) { throw new NotGrammarException("Cannot convert string to double: " + value); }
+                }
+                break;
+            case "boolean":
+                if (value instanceof Boolean) return value;
+                if (value instanceof Number) return ((Number) value).doubleValue() != 0;
+                if (value instanceof String) return !((String) value).isEmpty();
+                break;
+            case "string":
+                return value != null ? value.toString() : "null";
+            default:
+                // 未知类型，尝试直接返回
+                return value;
+        }
+
+        throw new NotGrammarException("Unsupported conversion to " + targetType + " from " +
+                (value != null ? value.getClass().getSimpleName() : "null"));
+    }
+
+    private void handleMethodCall(String line) throws Exception {
+        // 移除行内注释
+        int commentIndex = line.indexOf('#');
+        if (commentIndex != -1) {
+            line = line.substring(0, commentIndex).trim();
+        }
+
+        if (line.isEmpty()) {
+            return;
+        }
+
+        int dotIndex = line.indexOf('.');
+        int parenIndex = line.indexOf('(');
+
+        if (dotIndex == -1 || parenIndex == -1) {
+            throw new NotGrammarException("Invalid method call: " + line);
+        }
+
+        String className = line.substring(0, dotIndex);
+        String methodName = line.substring(dotIndex + 1, parenIndex);
+        String argsStr = line.substring(parenIndex + 1, line.length() - 1);
+
+        // 特殊处理 Sys.input 调用
+        if ("Sys".equals(className) && "input".equals(methodName)) {
+            handleSysInput(argsStr);
+            return;
+        }
+
+        // 使用 MethodInvocationHandler 处理方法调用
+        Object result = methodInvocationHandler.invokeMethod(className, methodName, argsStr);
+        this.lastResult = result;
+
+        if (debugMode) {
+            debugPrint("@ Method call: " + className + "." + methodName + "() returned: " + result);
+        }
+    }
+
+    /**
+     * 处理 Sys.input 调用 - 支持多值输入
+     */
+    private void handleSysInput(String argsStr) throws Exception {
+        debugPrint("@ 处理输入调用: " + argsStr);
+
+        if (argsStr.trim().isEmpty()) {
+            // 无参数调用
+            String input = (String) methodInvocationHandler.invokeSysInput("");
+            this.lastResult = input;
+            return;
+        }
+
+        // 解析输入参数
+        InputParseResult parseResult = parseInputArguments(argsStr);
+        String prompt = parseResult.prompt;
+        List<String> varNames = parseResult.varNames;
+
+        debugPrint("@ 输入配置: 提示='%s', 变量数量=%d", prompt, varNames.size());
+
+        if (varNames.size() > 1) {
+            // 多个变量 - 使用多值输入
+            debugPrint("@ 多变量输入模式");
+
+            // 读取一行输入
+            String inputLine;
+            if (prompt.isEmpty()) {
+                inputLine = (String) methodInvocationHandler.invokeSysInput("");
+            } else {
+                inputLine = (String) methodInvocationHandler.invokeSysInput("\"" + prompt + "\"");
+            }
+
+            debugPrint("@ 原始输入: '%s'", inputLine);
+
+            // 按空格分割输入
+            String[] inputValues = inputLine.split("\\s+", varNames.size());
+
+            // 存储每个变量
+            for (int i = 0; i < varNames.size(); i++) {
+                String value = (i < inputValues.length) ? inputValues[i] : "";
+                storeInputVariable(varNames.get(i), value);
+                debugPrint("@ 设置变量 '%s' = '%s'", varNames.get(i), value);
+            }
+
+            this.lastResult = inputValues.length > 0 ? inputValues[0] : "";
+
+        } else if (varNames.size() == 1) {
+            // 单个变量
+            String input;
+            if (prompt.isEmpty()) {
+                input = (String) methodInvocationHandler.invokeSysInput("");
+            } else {
+                input = (String) methodInvocationHandler.invokeSysInput("\"" + prompt + "\"");
+            }
+
+            // 存储变量
+            storeInputVariable(varNames.get(0), input);
+            debugPrint("@ 设置变量 '%s' = '%s'", varNames.get(0), input);
+
+            this.lastResult = input;
+        } else {
+            // 没有变量，只有提示
+            if (!prompt.isEmpty()) {
+                String input = (String) methodInvocationHandler.invokeSysInput("\"" + prompt + "\"");
+                this.lastResult = input;
+            } else {
+                String input = (String) methodInvocationHandler.invokeSysInput("");
+                this.lastResult = input;
+            }
+        }
+    }
+
+
+    /**
+     * 专门解析输入参数的方法 - 修复版
+     */
+    private InputParseResult parseInputArguments(String argsStr) throws Exception {
+        InputParseResult result = new InputParseResult();
+
+        // 移除所有空白字符，方便解析
+        String cleanArgs = argsStr.replaceAll("\\s+", " ").trim();
+
+        // 检查是否有字符串提示部分
+        if (cleanArgs.startsWith("\"")) {
+            // 解析字符串字面量
+            ParseResult stringResult = parseCompleteStringLiteral(cleanArgs, -1);
+            result.prompt = stringResult.value;
+
+            // 解析剩余部分中的变量声明
+            if (!stringResult.remaining.isEmpty()) {
+                parseVariableDeclarations(stringResult.remaining, result.varNames);
+            }
+        } else {
+            // 没有字符串提示，直接解析变量声明
+            parseVariableDeclarations(cleanArgs, result.varNames);
+        }
+
+        debugPrint("@ 解析结果: 提示='%s', 变量=%s", result.prompt, result.varNames);
+        return result;
+    }
+
+    /**
+     * 解析变量声明 - 修复版
+     */
+    private void parseVariableDeclarations(String expr, List<String> varNames) {
+        // 使用正则表达式匹配 var + 变量名的模式
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("var\\s+([a-zA-Z_][a-zA-Z0-9_]*)");
+        java.util.regex.Matcher matcher = pattern.matcher(expr);
+
+        while (matcher.find()) {
+            String varName = matcher.group(1);
+            if (!varNames.contains(varName)) {
+                varNames.add(varName);
+                debugPrint("@ 发现变量: " + varName);
+            }
+        }
+
+        // 如果没有找到变量，尝试简单分割
+        if (varNames.isEmpty()) {
+            String[] parts = expr.split("\\+");
+            for (String part : parts) {
+                part = part.trim();
+                if (part.startsWith("var ")) {
+                    String varName = part.substring(4).trim();
+                    varNames.add(varName);
+                }
+            }
+        }
+    }
+
+    /**
+     * 输入解析结果容器
+     */
+    private static class InputParseResult {
+        String prompt = "";
+        List<String> varNames = new ArrayList<>();
+    }
+
+    private int calculateIndent(String line) {
+        int count = 0;
+        for (char c : line.toCharArray()) {
+            if (c == ' ') count++;
+            else break;
+        }
+        return count;
+    }
+
+    private String extractCondition(String line) {
+        int start = line.indexOf('(');
+        int end = line.lastIndexOf(')');
+        return (start != -1 && end != -1) ? line.substring(start + 1, end) : "";
+    }
+
+    private Object[] parseArguments(String argsStr) {
+        if (argsStr.trim().isEmpty()) return new Object[0];
+
+        List<Object> args = new ArrayList<>();
+        String[] parts = splitArgs(argsStr);
+
+        for (int i = 0; i < parts.length; i++) {
+            String part = parts[i].trim();
+            try {
+                // 尝试作为表达式求值
+                Object value = evaluateExpression(part, -1);
+                args.add(value);
+            } catch (Exception e) {
+                // 如果求值失败，作为字符串处理
+                if (part.startsWith("\"") && part.endsWith("\"")) {
+                    args.add(part.substring(1, part.length() - 1));
+                } else {
+                    args.add(part);
+                }
+            }
+        }
+        return args.toArray();
+    }
+
+    private String[] splitArgs(String argsStr) {
+        List<String> parts = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inQuotes = false;
+
+        for (char c : argsStr.toCharArray()) {
+            if (c == '"') {
+                inQuotes = !inQuotes;
+                current.append(c);
+            } else if (c == ',' && !inQuotes) {
+                parts.add(current.toString().trim());
+                current.setLength(0);
+            } else {
+                current.append(c);
+            }
+        }
+
+        if (current.length() > 0) {
+            parts.add(current.toString().trim());
+        }
+
+        return parts.toArray(new String[0]);
+    }
+
+    // 内部类
+    private static class LoopContext {
+        int remainingIterations;
+        int startPC;
+        boolean infiniteLoop; // 新增：标记是否为无限循环
+
+        LoopContext(int iterations, int startPC) {
+            this.remainingIterations = iterations;
+            this.startPC = startPC;
+            this.infiniteLoop = false;
+        }
+
+        LoopContext(int iterations, int startPC, boolean infiniteLoop) {
+            this.remainingIterations = iterations;
+            this.startPC = startPC;
+            this.infiniteLoop = infiniteLoop;
+        }
+    }
+
+    private static class Instruction {
+        OpCode opCode;
+        String operand;
+        int lineNumber;
+        int indentLevel;
+        Object extraData;
+
+        Instruction(OpCode opCode, String operand, int lineNumber, int indentLevel) {
+            this.opCode = opCode;
+            this.operand = operand;
+            this.lineNumber = lineNumber;
+            this.indentLevel = indentLevel;
+        }
+
+        Instruction(OpCode opCode, String operand, int lineNumber, int indentLevel, Object extraData) {
+            this.opCode = opCode;
+            this.operand = operand;
+            this.lineNumber = lineNumber;
+            this.indentLevel = indentLevel;
+            this.extraData = extraData;
+        }
+    }
+
+    private enum OpCode {
+        IMPORT, VAR_DECL, VAR_ASSIGN, LOOP_START, END_BLOCK, CALL, GIVE, DO, CHANGE
+    }
+
+    // 块类型枚举
+    private enum BlockType {
+        LOOP
+    }
+
+    // 块上下文
+    private static class BlockContext {
+        BlockType type;
+        int indent;
+
+        BlockContext(BlockType type, int indent) {
+            this.type = type;
+            this.indent = indent;
+        }
+    }
+
+    // Give语句数据结构
+    private static class GiveInstructionData {
+        String className;
+        String arguments;
+
+        GiveInstructionData(String className, String arguments) {
+            this.className = className;
+            this.arguments = arguments;
+        }
+    }
+
+    // Do语句数据结构
+    private static class DoInstructionData {
+        String className;
+        String methodName;
+        String arguments;
+
+        DoInstructionData(String className, String methodName, String arguments) {
+            this.className = className;
+            this.methodName = methodName;
+            this.arguments = arguments;
+        }
+    }
+
+    // Give结果类
+    public static class GiveResult {
+        private String targetClass;
+        private Map<String, Object> variables;
+
+        public GiveResult(String targetClass, Map<String, Object> variables) {
+            this.targetClass = targetClass;
+            this.variables = variables;
+        }
+
+        public String getTargetClass() {
+            return targetClass;
+        }
+
+        public Map<String, Object> getVariables() {
+            return variables;
+        }
+
+        @Override
+        public String toString() {
+            return "GiveResult{targetClass='" + targetClass + "', variables=" + variables + '}';
+        }
+    }
+
+    /**
+     * 表达式求值入口（带行号）
+     */
     Object evaluateExpression(String expr, int lineNumber) throws Exception{
-        expr = expr.trim();
+        expr = (expr == null ? "" : expr.trim());
 
         // 移除行内注释（# 之后的内容）
         int commentIndex = expr.indexOf('#');
@@ -467,21 +980,15 @@ public class VolcanoRuntime {
 
         // 处理变量引用
         if (variables.containsKey(expr)) {
-            return variables.get(expr);
+            Object val = variables.get(expr);
+            if (val == UNINITIALIZED) {
+                throw new NullTokenException(expr, "variable usage");
+            }
+            return val;
         }
 
         // 如果都不是，返回原始字符串（可能是未引用的字符串）
         return expr;
-    }
-
-
-
-
-    /**
-     * 解析完整的字符串字面量，返回值和剩余部分
-     */
-    private ParseResult parseCompleteStringLiteral(String expr) {
-        return parseCompleteStringLiteral(expr, -1); // 默认使用-1表示未知行号
     }
 
     /**
@@ -542,7 +1049,6 @@ public class VolcanoRuntime {
         return new ParseResult(result.toString(), remaining.trim());
     }
 
-
     /**
      * 解析结果容器
      */
@@ -555,8 +1061,6 @@ public class VolcanoRuntime {
             this.remaining = remaining;
         }
     }
-
-
 
     /**
      * 解析字符串字面量，支持转义字符
@@ -708,13 +1212,6 @@ public class VolcanoRuntime {
     /**
      * 增强的运算符表达式求值 - 先分词再计算
      */
-    private Object evaluateOperatorExpression(String expr) throws Exception {
-        return evaluateOperatorExpression(expr, -1); // 默认使用-1表示未知行号
-    }
-
-    /**
-     * 增强的运算符表达式求值 - 先分词再计算（带行号）
-     */
     private Object evaluateOperatorExpression(String expr, int lineNumber) throws Exception {
         expr = expr.trim();
 
@@ -723,7 +1220,7 @@ public class VolcanoRuntime {
 
         // 如果只有一个令牌，直接返回
         if (tokens.size() == 1) {
-            return tokens.get(0);
+            return ensureEvaluated(tokens.get(0), lineNumber);
         }
 
         // 处理运算符表达式
@@ -732,13 +1229,6 @@ public class VolcanoRuntime {
 
     /**
      * 增强的令牌化方法 - 识别 var 关键字
-     */
-    private List<Object> tokenizeExpression(String expr) throws Exception {
-        return tokenizeExpression(expr, -1); // 默认使用-1表示未知行号
-    }
-
-    /**
-     * 增强的令牌化方法 - 识别 var 关键字（带行号）
      */
     private List<Object> tokenizeExpression(String expr, int lineNumber) throws Exception {
         List<Object> tokens = new ArrayList<>();
@@ -821,13 +1311,6 @@ public class VolcanoRuntime {
     /**
      * 处理非字符串内容，识别 var 关键字
      */
-    private void processNonStringContent(String content, List<Object> tokens) throws Exception {
-        processNonStringContent(content, tokens, -1); // 默认使用-1表示未知行号
-    }
-
-    /**
-     * 处理非字符串内容，识别 var 关键字（带行号）
-     */
     private void processNonStringContent(String content, List<Object> tokens, int lineNumber) throws Exception {
         content = content.trim();
         if (content.isEmpty()) return;
@@ -859,24 +1342,17 @@ public class VolcanoRuntime {
 
 
     /**
-     * 计算令牌列表的值
-     */
-    private Object evaluateTokens(List<Object> tokens) throws Exception {
-        return evaluateTokens(tokens, -1); // 默认使用-1表示未知行号
-    }
-
-    /**
      * 计算令牌列表的值（带行号）
      */
     private Object evaluateTokens(List<Object> tokens, int lineNumber) throws Exception {
         if (tokens.isEmpty()) return null;
-        if (tokens.size() == 1) return tokens.get(0);
+        if (tokens.size() == 1) return ensureEvaluated(tokens.get(0), lineNumber);
 
         // 先处理数字拼接 (++)
         for (int i = 0; i < tokens.size() - 1; i++) {
             if ("++".equals(tokens.get(i))) {
-                Object left = (i > 0) ? tokens.get(i - 1) : null;
-                Object right = (i < tokens.size() - 1) ? tokens.get(i + 1) : null;
+                Object left = (i > 0) ? ensureEvaluated(tokens.get(i - 1), lineNumber) : null;
+                Object right = (i < tokens.size() - 1) ? ensureEvaluated(tokens.get(i + 1), lineNumber) : null;
                 Object result = concatenateNumbers(left, right);
 
                 // 替换这三个令牌为结果
@@ -996,23 +1472,17 @@ public class VolcanoRuntime {
     }
 
     /**
-     * 确保对象已经被求值
-     */
-    private Object ensureEvaluated(Object obj) throws Exception {
-        return ensureEvaluated(obj, -1); // 默认使用-1表示未知行号
-    }
-
-    /**
      * 确保对象已经被求值（带行号）
      */
     private Object ensureEvaluated(Object obj, int lineNumber) throws Exception {
         if (obj instanceof String) {
             return evaluateExpression((String) obj, lineNumber);
         }
+        if (obj instanceof StringRepeat) {
+            return obj.toString();
+        }
         return obj;
     }
-
-
 
     private int findOperator(String expr, String op) {
         boolean inString = false;
@@ -1055,8 +1525,25 @@ public class VolcanoRuntime {
         return -1;
     }
 
-    private Object calculateValues(Object left, Object right, String op) {
-        return calculateValues(left, right, op, -1); // 默认使用-1表示未知行号
+    /**
+     * 字符串重复的内部表示（支持链式重复）
+     */
+    private static class StringRepeat {
+        final String base;
+        final int count;
+
+        StringRepeat(String base, int count) {
+            this.base = base == null ? "null" : base;
+            this.count = Math.max(0, count);
+        }
+
+        @Override
+        public String toString() {
+            if (count <= 0) return "";
+            StringBuilder sb = new StringBuilder(base.length() * count);
+            for (int i = 0; i < count; i++) sb.append(base);
+            return sb.toString();
+        }
     }
 
     private Object calculateValues(Object left, Object right, String op, int lineNumber) {
@@ -1068,8 +1555,8 @@ public class VolcanoRuntime {
                     throw new NotGrammarException("Cannot add two boolean values: " + left + " + " + right);
                 }
 
-                // 字符串拼接：任意一边是字符串，或者数字+字符串，或者布尔值+字符串
-                if (left instanceof String || right instanceof String) {
+                // 字符串拼接：任意一边是字符串，或者 StringRepeat，或者数字+字符串，或者布尔值+字符串
+                if (left instanceof String || right instanceof String || left instanceof StringRepeat || right instanceof StringRepeat) {
                     return String.valueOf(left) + String.valueOf(right);
                 }
 
@@ -1110,17 +1597,56 @@ public class VolcanoRuntime {
                 }
 
                 throw new NotGrammarException("Unsupported operand types for +: " +
-                        left.getClass().getSimpleName() + " and " + right.getClass().getSimpleName());
+                        (left != null ? left.getClass().getSimpleName() : "null") + " and " + (right != null ? right.getClass().getSimpleName() : "null"));
             }
 
+            // 对 / 或 % 操作，如果任一操作数是字符串或StringRepeat，抛出 MathError（不能对字符串做除法或取模）
             if ("/".equals(op) || "%".equals(op)) {
+                if (left instanceof String || right instanceof String || left instanceof StringRepeat || right instanceof StringRepeat) {
+                    throw new MathError("Cannot perform '" + op + "' on non-numeric operand(s)");
+                }
                 double r = toDouble(right);
                 if (r == 0) {
                     throw MathError.divisionByZero();
                 }
             }
 
-            // 处理其他运算符：-, *, /, %
+            // 处理乘法运算符 - 包含字符串重复支持
+            if ("*".equals(op)) {
+                // 字符串或 StringRepeat 与 数字 的重复语义（支持链式）
+                if (left instanceof String && right instanceof Number) {
+                    return new StringRepeat((String) left, toInt(right));
+                }
+                if (left instanceof Number && right instanceof String) {
+                    return new StringRepeat((String) right, toInt(left));
+                }
+                if (left instanceof StringRepeat && right instanceof Number) {
+                    StringRepeat sr = (StringRepeat) left;
+                    return new StringRepeat(sr.base, sr.count * toInt(right));
+                }
+                if (left instanceof Number && right instanceof StringRepeat) {
+                    StringRepeat sr = (StringRepeat) right;
+                    return new StringRepeat(sr.base, toInt(left) * sr.count);
+                }
+
+                // 如果任一是字符串但不满足上面模式，则错误
+                if (left instanceof String || right instanceof String || left instanceof StringRepeat || right instanceof StringRepeat) {
+                    throw new MathError("Cannot perform '*' between non-numeric operands except for string repetition");
+                }
+
+                // 数字乘法（和 / % - 的处理类似）
+                if (left instanceof Double || right instanceof Double) {
+                    double l = toDouble(left);
+                    double r = toDouble(right);
+                    return l * r;
+                } else {
+                    int l = toInt(left);
+                    int r = toInt(right);
+                    return l * r;
+                }
+            }
+
+            // 处理其他运算符：-, /, %（/,% 的零检查上面已经处理）
             // 自动类型转换：如果任意一边是double，都转为double
             if (left instanceof Double || right instanceof Double) {
                 double l = toDouble(left);
@@ -1129,8 +1655,6 @@ public class VolcanoRuntime {
                 switch (op) {
                     case "-":
                         return l - r;
-                    case "*":
-                        return l * r;
                     case "/":
                         return r != 0 ? l / r : 0;
                     case "%":
@@ -1144,23 +1668,17 @@ public class VolcanoRuntime {
                 switch (op) {
                     case "-":
                         return l - r;
-                    case "*":
-                        return l * r;
                     case "/":
                         return r != 0 ? l / r : 0;
                     case "%":
                         return r != 0 ? l % r : 0;
                 }
             }
-        }catch (ArithmeticException e) {
-        throw MathError.overflow(op);
-    }
+        } catch (ArithmeticException e) {
+            throw MathError.overflow(op);
+        }
 
         throw new NotGrammarException("Unsupported operator: " + op);
-    }
-
-    private boolean compareValues(Object left, Object right, String op) {
-        return compareValues(left, right, op, -1); // 默认使用-1表示未知行号
     }
 
     private boolean compareValues(Object left, Object right, String op, int lineNumber) {
@@ -1204,7 +1722,7 @@ public class VolcanoRuntime {
             }
         }
 
-        throw new NotGrammarException("Cannot compare values of different types: " + left + " and " + right);
+        throw new NotGrammarException("Cannot compare values of different or unsupported types: " + left + " and " + right);
     }
 
     private double toDouble(Object obj) {
@@ -1214,10 +1732,10 @@ public class VolcanoRuntime {
             try {
                 return Double.parseDouble((String) obj);
             } catch (NumberFormatException e) {
-                return 0;
+                throw new MathError("Cannot convert string to number: " + obj);
             }
         }
-        return 0;
+        throw new MathError("Cannot convert to double: " + obj);
     }
 
     private int toInt(Object obj) {
@@ -1227,11 +1745,11 @@ public class VolcanoRuntime {
             try {
                 return Integer.parseInt((String) obj);
             } catch (NumberFormatException e) {
-                return 0;
+                throw new MathError("Cannot convert string to int: " + obj);
             }
         }
         if (obj instanceof Boolean) return (Boolean) obj ? 1 : 0;
-        return 0;
+        throw new MathError("Cannot convert to int: " + obj);
     }
 
     private boolean toBoolean(Object obj) {
@@ -1242,7 +1760,7 @@ public class VolcanoRuntime {
     }
 
     private void handleLoopStart(Instruction instr) throws Exception {
-        Object conditionValue = evaluateExpression(instr.operand);
+        Object conditionValue = evaluateExpression(instr.operand, instr.lineNumber);
         int loopCount;
         boolean infiniteLoop = false;
 
@@ -1315,351 +1833,51 @@ public class VolcanoRuntime {
         }
     }
 
-    private void handleMethodCall(String line) throws Exception {
-        // 移除行内注释
-        int commentIndex = line.indexOf('#');
-        if (commentIndex != -1) {
-            line = line.substring(0, commentIndex).trim();
-        }
-
-        if (line.isEmpty()) {
-            return;
-        }
-
-        int dotIndex = line.indexOf('.');
-        int parenIndex = line.indexOf('(');
-
-        if (dotIndex == -1 || parenIndex == -1) {
-            throw new NotGrammarException("Invalid method call: " + line);
-        }
-
-        String className = line.substring(0, dotIndex);
-        String methodName = line.substring(dotIndex + 1, parenIndex);
-        String argsStr = line.substring(parenIndex + 1, line.length() - 1);
-
-        // 特殊处理 Sys.input 调用
-        if ("Sys".equals(className) && "input".equals(methodName)) {
-            handleSysInput(argsStr);
-            return;
-        }
-
-        // 使用 MethodInvocationHandler 处理方法调用
-        Object result = methodInvocationHandler.invokeMethod(className, methodName, argsStr);
-        this.lastResult = result;
-
-        if (debugMode) {
-            debugPrint("@ Method call: " + className + "." + methodName + "() returned: " + result);
+    // 工具方法：规范化类型名
+    private String normalizeTypeName(String raw) {
+        if (raw == null) return null;
+        String s = raw.trim().toLowerCase();
+        switch (s) {
+            case "int": case "integer": return "int";
+            case "double": case "float": return "double";
+            case "bool": case "boolean": return "boolean";
+            case "string": case "str": return "string";
+            default: return s;
         }
     }
 
-    /**
-     * 处理 Sys.input 调用 - 支持多值输入
-     */
-    private void handleSysInput(String argsStr) throws Exception {
-        debugPrint("@ 处理输入调用: " + argsStr);
-
-        if (argsStr.trim().isEmpty()) {
-            // 无参数调用
-            String input = (String) methodInvocationHandler.invokeSysInput("");
-            this.lastResult = input;
-            return;
-        }
-
-        // 解析输入参数
-        InputParseResult parseResult = parseInputArguments(argsStr);
-        String prompt = parseResult.prompt;
-        List<String> varNames = parseResult.varNames;
-
-        debugPrint("@ 输入配置: 提示='%s', 变量数量=%d", prompt, varNames.size());
-
-        if (varNames.size() > 1) {
-            // 多个变量 - 使用多值输入
-            debugPrint("@ 多变量输入模式");
-
-            // 读取一行输入
-            String inputLine;
-            if (prompt.isEmpty()) {
-                inputLine = (String) methodInvocationHandler.invokeSysInput("");
-            } else {
-                inputLine = (String) methodInvocationHandler.invokeSysInput("\"" + prompt + "\"");
-            }
-
-            debugPrint("@ 原始输入: '%s'", inputLine);
-
-            // 按空格分割输入
-            String[] inputValues = inputLine.split("\\s+", varNames.size());
-
-            // 存储每个变量
-            for (int i = 0; i < varNames.size(); i++) {
-                String value = (i < inputValues.length) ? inputValues[i] : "";
-                storeInputVariable(varNames.get(i), value);
-                debugPrint("@ 设置变量 '%s' = '%s'", varNames.get(i), value);
-            }
-
-            this.lastResult = inputValues.length > 0 ? inputValues[0] : "";
-
-        } else if (varNames.size() == 1) {
-            // 单个变量
-            String input;
-            if (prompt.isEmpty()) {
-                input = (String) methodInvocationHandler.invokeSysInput("");
-            } else {
-                input = (String) methodInvocationHandler.invokeSysInput("\"" + prompt + "\"");
-            }
-
-            // 存储变量
-            storeInputVariable(varNames.get(0), input);
-            debugPrint("@ 设置变量 '%s' = '%s'", varNames.get(0), input);
-
-            this.lastResult = input;
-        } else {
-            // 没有变量，只有提示
-            if (!prompt.isEmpty()) {
-                String input = (String) methodInvocationHandler.invokeSysInput("\"" + prompt + "\"");
-                this.lastResult = input;
-            } else {
-                String input = (String) methodInvocationHandler.invokeSysInput("");
-                this.lastResult = input;
-            }
+    // 判断对象的实际类型是否精确匹配目标类型（不允许隐式转换）
+    private boolean isExactTypeMatchToType(Object val, String typeName) {
+        if (val == null) return false;
+        switch (typeName) {
+            case "int": return val instanceof Integer;
+            case "double": return val instanceof Double;
+            case "boolean": return val instanceof Boolean;
+            case "string": return val instanceof String;
+            default: return true;
         }
     }
 
-
-    /**
-     * 专门解析输入参数的方法 - 修复版
-     */
-    private InputParseResult parseInputArguments(String argsStr) throws Exception {
-        InputParseResult result = new InputParseResult();
-
-        // 移除所有空白字符，方便解析
-        String cleanArgs = argsStr.replaceAll("\\s+", " ").trim();
-
-        // 检查是否有字符串提示部分
-        if (cleanArgs.startsWith("\"")) {
-            // 解析字符串字面量
-            ParseResult stringResult = parseCompleteStringLiteral(cleanArgs);
-            result.prompt = stringResult.value;
-
-            // 解析剩余部分中的变量声明
-            if (!stringResult.remaining.isEmpty()) {
-                parseVariableDeclarations(stringResult.remaining, result.varNames);
-            }
-        } else {
-            // 没有字符串提示，直接解析变量声明
-            parseVariableDeclarations(cleanArgs, result.varNames);
+    // 工具：检测是否与类型严格匹配（在 change 或 assignment 前使用）
+    private boolean isExactTypeMatch(Object val, Class<?> t) {
+        if (val == null) return !t.isPrimitive();
+        if (t.isInstance(val)) return true;
+        if (t.isPrimitive()) {
+            Class<?> wrapper = getWrapperClass(t);
+            return wrapper.isInstance(val);
         }
-
-        debugPrint("@ 解析结果: 提示='%s', 变量=%s", result.prompt, result.varNames);
-        return result;
+        return false;
     }
 
-    /**
-     * 解析变量声明 - 修复版
-     */
-    private void parseVariableDeclarations(String expr, List<String> varNames) {
-        // 使用正则表达式匹配 var + 变量名的模式
-        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("var\\s+([a-zA-Z_][a-zA-Z0-9_]*)");
-        java.util.regex.Matcher matcher = pattern.matcher(expr);
-
-        while (matcher.find()) {
-            String varName = matcher.group(1);
-            if (!varNames.contains(varName)) {
-                varNames.add(varName);
-                debugPrint("@ 发现变量: " + varName);
-            }
-        }
-
-        // 如果没有找到变量，尝试简单分割
-        if (varNames.isEmpty()) {
-            String[] parts = expr.split("\\+");
-            for (String part : parts) {
-                part = part.trim();
-                if (part.startsWith("var ")) {
-                    String varName = part.substring(4).trim();
-                    varNames.add(varName);
-                }
-            }
-        }
-    }
-
-    /**
-     * 输入解析结果容器
-     */
-    private static class InputParseResult {
-        String prompt = "";
-        List<String> varNames = new ArrayList<>();
-    }
-
-    private int calculateIndent(String line) {
-        int count = 0;
-        for (char c : line.toCharArray()) {
-            if (c == ' ') count++;
-            else break;
-        }
-        return count;
-    }
-
-    private String extractCondition(String line) {
-        int start = line.indexOf('(');
-        int end = line.lastIndexOf(')');
-        return (start != -1 && end != -1) ? line.substring(start + 1, end) : "";
-    }
-
-    private Object[] parseArguments(String argsStr) {
-        if (argsStr.trim().isEmpty()) return new Object[0];
-
-        List<Object> args = new ArrayList<>();
-        String[] parts = splitArgs(argsStr);
-
-        for (String part : parts) {
-            part = part.trim();
-            try {
-                // 尝试作为表达式求值
-                Object value = evaluateExpression(part);
-                args.add(value);
-            } catch (Exception e) {
-                // 如果求值失败，作为字符串处理
-                if (part.startsWith("\"") && part.endsWith("\"")) {
-                    args.add(part.substring(1, part.length() - 1));
-                } else {
-                    args.add(part);
-                }
-            }
-        }
-        return args.toArray();
-    }
-
-    private String[] splitArgs(String argsStr) {
-        List<String> parts = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        boolean inQuotes = false;
-
-        for (char c : argsStr.toCharArray()) {
-            if (c == '"') {
-                inQuotes = !inQuotes;
-                current.append(c);
-            } else if (c == ',' && !inQuotes) {
-                parts.add(current.toString().trim());
-                current.setLength(0);
-            } else {
-                current.append(c);
-            }
-        }
-
-        if (current.length() > 0) {
-            parts.add(current.toString().trim());
-        }
-
-        return parts.toArray(new String[0]);
-    }
-
-    // 内部类
-    private static class LoopContext {
-        int remainingIterations;
-        int startPC;
-        boolean infiniteLoop; // 新增：标记是否为无限循环
-
-        LoopContext(int iterations, int startPC) {
-            this.remainingIterations = iterations;
-            this.startPC = startPC;
-            this.infiniteLoop = false;
-        }
-
-        LoopContext(int iterations, int startPC, boolean infiniteLoop) {
-            this.remainingIterations = iterations;
-            this.startPC = startPC;
-            this.infiniteLoop = infiniteLoop;
-        }
-    }
-
-    private static class Instruction {
-        OpCode opCode;
-        String operand;
-        int lineNumber;
-        int indentLevel;  // 缩进级别
-        Object extraData; // 用于存储额外数据
-
-        Instruction(OpCode opCode, String operand, int lineNumber, int indentLevel) {
-            this.opCode = opCode;
-            this.operand = operand;
-            this.lineNumber = lineNumber;
-            this.indentLevel = indentLevel;
-        }
-
-        Instruction(OpCode opCode, String operand, int lineNumber, int indentLevel, Object extraData) {
-            this.opCode = opCode;
-            this.operand = operand;
-            this.lineNumber = lineNumber;
-            this.indentLevel = indentLevel;
-            this.extraData = extraData;
-        }
-    }
-
-    private enum OpCode {
-        IMPORT, VAR_DECL, VAR_ASSIGN, LOOP_START, END_BLOCK, CALL, GIVE, DO
-    }
-
-    // 块类型枚举
-    private enum BlockType {
-        LOOP
-    }
-
-    // 块上下文
-    private static class BlockContext {
-        BlockType type;
-        int indent;
-
-        BlockContext(BlockType type, int indent) {
-            this.type = type;
-            this.indent = indent;
-        }
-    }
-
-    // Give语句数据结构
-    private static class GiveInstructionData {
-        String className;
-        String arguments;
-
-        GiveInstructionData(String className, String arguments) {
-            this.className = className;
-            this.arguments = arguments;
-        }
-    }
-
-    // Do语句数据结构
-    private static class DoInstructionData {
-        String className;
-        String methodName;
-        String arguments;
-
-        DoInstructionData(String className, String methodName, String arguments) {
-            this.className = className;
-            this.methodName = methodName;
-            this.arguments = arguments;
-        }
-    }
-
-    // Give结果类
-    public static class GiveResult {
-        private String targetClass;
-        private Map<String, Object> variables;
-
-        public GiveResult(String targetClass, Map<String, Object> variables) {
-            this.targetClass = targetClass;
-            this.variables = variables;
-        }
-
-        public String getTargetClass() {
-            return targetClass;
-        }
-
-        public Map<String, Object> getVariables() {
-            return variables;
-        }
-
-        @Override
-        public String toString() {
-            return "GiveResult{targetClass='" + targetClass + "', variables=" + variables + '}';
-        }
+    private Class<?> getWrapperClass(Class<?> primitive) {
+        if (primitive == int.class) return Integer.class;
+        if (primitive == double.class) return Double.class;
+        if (primitive == boolean.class) return Boolean.class;
+        if (primitive == long.class) return Long.class;
+        if (primitive == float.class) return Float.class;
+        if (primitive == char.class) return Character.class;
+        if (primitive == byte.class) return Byte.class;
+        if (primitive == short.class) return Short.class;
+        return primitive;
     }
 }

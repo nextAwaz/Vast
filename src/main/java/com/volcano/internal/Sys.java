@@ -5,9 +5,6 @@ import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 
-/**
- * 系统操作内置库 - 修复编码和输入问题
- */
 public class Sys {
 
     private static final BufferedReader reader =
@@ -47,9 +44,6 @@ public class Sys {
         System.exit(code);
     }
 
-    /**
-     * 基础输入方法 - 无参数
-     */
     public static String input() {
         try {
             return reader.readLine();
@@ -59,9 +53,6 @@ public class Sys {
         }
     }
 
-    /**
-     * 带提示的输入方法
-     */
     public static String input(String prompt) {
         try {
             out.print(prompt);
@@ -73,9 +64,6 @@ public class Sys {
         }
     }
 
-    /**
-     * 多值输入方法 - 在同一行用空格分隔多个值
-     */
     public static String[] multiValueInput(String prompt, int valueCount) {
         try {
             out.print(prompt);
@@ -114,9 +102,6 @@ public class Sys {
         }
     }
 
-    /**
-     * 分割字符串，但尊重引号
-     */
     private static String[] splitRespectingQuotes(String line, int maxParts) {
         java.util.List<String> parts = new java.util.ArrayList<>();
         StringBuilder current = new StringBuilder();
