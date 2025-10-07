@@ -4,8 +4,10 @@ import java.io.*;
 import java.nio.file.*;
 import java.util.*;
 
+import com.volcano.vm.VolcanoVM;
+
 public class VolcanoCLI {
-    static String ver = "0.0.7";//版本信息
+    static String ver = "0.0.8";//版本信息
     public static void main(String[] args) {
         if (args.length == 0) {
             printUsage();
@@ -104,7 +106,7 @@ public class VolcanoCLI {
             // 自动为 CLI eval 添加所有内置库的导入，避免手工写 imp
             StringBuilder finalCode = new StringBuilder();
             // VolcanoVM 在同一包中，可直接访问其静态 BUILTIN_CLASSES
-            for (String cls : VolcanoVM.BUILTIN_CLASSES.keySet()) {
+            for (String cls : VolcanoVM.getBuiltinClasses().keySet()) {
                 finalCode.append("imp ").append(cls).append("\n");
             }
             finalCode.append(code.toString());
