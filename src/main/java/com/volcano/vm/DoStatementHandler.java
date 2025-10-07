@@ -386,7 +386,7 @@ public class DoStatementHandler {
         return result;
     }
 
-    // ========= 修改点开始：添加支持带行号的 evaluateExpression 重载 =========
+    // 支持带行号的 evaluateExpression
     /**
      * 对表达式求值，委托给VolcanoRuntime。
      * 向后兼容的单参数版本委托给带未知行（-1）的双参数版本。
@@ -401,7 +401,7 @@ public class DoStatementHandler {
     private Object evaluateExpression(String expr, int lineNumber) throws Exception {
         return runtime.evaluateExpression(expr, lineNumber);
     }
-    // ========= 修改点结束 =========
+
 
     private Object convertValueToFieldType(Object value, Class<?> fieldType) {
         if (value == null) {
