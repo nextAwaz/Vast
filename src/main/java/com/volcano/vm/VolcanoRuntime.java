@@ -542,44 +542,54 @@ public class VolcanoRuntime {//Volcano Runtime的核心，也是最复杂的一�
     }
 
     /**
-     * 将对象转换为指定的目标类型（严格转换，仅能在可预见的情形下转换）
+     * 将对象转换为指定的目标类型（严格转换：若不可转换则抛出 NotGrammarException）
+     * 统一所有转换逻辑入口，避免不同路径产生不一致行为。
      */
     private Object convertToType(Object value, String targetType) {
         if (targetType == null) return value;
 
-        switch (targetType) {
-            case "int":
-                if (value instanceof Integer) return value;
-                if (value instanceof Number) return ((Number) value).intValue();
-                if (value instanceof Boolean) return (Boolean) value ? 1 : 0;
-                if (value instanceof String) {
-                    try { return Integer.parseInt((String) value); }
-                    catch (NumberFormatException e) { throw new NotGrammarException("Cannot convert string to int: " + value); }
-                }
-                break;
-            case "double":
-                if (value instanceof Double) return value;
-                if (value instanceof Number) return ((Number) value).doubleValue();
-                if (value instanceof Boolean) return (Boolean) value ? 1.0 : 0.0;
-                if (value instanceof String) {
-                    try { return Double.parseDouble((String) value); }
-                    catch (NumberFormatException e) { throw new NotGrammarException("Cannot convert string to double: " + value); }
-                }
-                break;
-            case "boolean":
-                if (value instanceof Boolean) return value;
-                if (value instanceof Number) return ((Number) value).doubleValue() != 0;
-                if (value instanceof String) return !((String) value).isEmpty();
-                break;
-            case "string":
-                return value != null ? value.toString() : "null";
-            default:
-                // 未知类型，尝试直接返回
-                return value;
-        }
+        targetType = normalizeTypeName(targetType);
 
-        throw new NotGrammarException("Unsupported conversion to " + targetType + " from " +
-                (value != null ? value.getClass().getSimpleName() : "null"));
+        try {
+            switch (targetType) {
+                case "int":
+                    if (value instanceof Integer) return value;
+                    if (value instanceof Number) return ((Number) value).intValue();
+                    if (value instanceof Boolean) return (Boolean) value ? 1 : 0;
+                    if (value instanceof String) return Integer.parseInt((String) value);
+                    throw new NotGrammarException("Cannot convert type " + (value != null ? value.getClass().getSimpleName() : "null") + " to int");
+                case "long":
+                    if (value instanceof Long) return value;
+                    if (value instanceof Number) return ((Number) value).longValue();
+                    if (value instanceof Boolean) return (Boolean) value ? 1L : 0L;
+                    if (value instanceof String) return Long.parseLong((String) value);
+                    throw new NotGrammarException("Cannot convert type " + (value != null ? value.getClass().getSimpleName() : "null") + " to long");
+                case "double":
+                    if (value instanceof Double) return value;
+                    if (value instanceof Number) return ((Number) value).doubleValue();
+                    if (value instanceof Boolean) return (Boolean) value ? 1.0 : 0.0;
+                    if (value instanceof String) return Double.parseDouble((String) value);
+                    throw new NotGrammarException("Cannot convert type " + (value != null ? value.getClass().getSimpleName() : "null") + " to double");
+                case "float":
+                    if (value instanceof Float) return value;
+                    if (value instanceof Number) return ((Number) value).floatValue();
+                    if (value instanceof Boolean) return (Boolean) value ? 1f : 0f;
+                    if (value instanceof String) return Float.parseFloat((String) value);
+                    throw new NotGrammarException("Cannot convert type " + (value != null ? value.getClass().getSimpleName() : "null") + " to float");
+                case "boolean":
+                    if (value instanceof Boolean) return value;
+                    if (value instanceof Number) return ((Number) value).doubleValue() != 0;
+                    if (value instanceof String) return !((String) value).isEmpty();
+                    throw new NotGrammarException("Cannot convert type " + (value != null ? value.getClass().getSimpleName() : "null") + " to boolean");
+                case "string":
+                    return value != null ? value.toString() : "null";
+                default:
+                    // 对于未知的自定义/对象类型，若已经是目标类型的实例则返回，否则尽量直接返回原值（或抛出根据策略）
+                    return value;
+            }
+        } catch (NumberFormatException e) {
+            throw new NotGrammarException("Cannot convert value to " + targetType + ": " + value);
+        }
     }
 
     private void handleMethodCall(String line) throws Exception {
@@ -1860,15 +1870,37 @@ public class VolcanoRuntime {//Volcano Runtime的核心，也是最复杂的一�
         }
     }
 
-    // 判断对象的实际类型是否精确匹配目标类型（不允许隐式转换）
+    /**
+     * 判断对象的实际类型是否精确匹配目标类型（静态类型检查）
+     * 默认行为：严格匹配（Integer != Double）。如果需要允许数值宽化（例如 int -> double），可以打开 allowNumericWideningForStatic。
+     */
     private boolean isExactTypeMatchToType(Object val, String typeName) {
         if (val == null) return false;
-        switch (typeName) {
-            case "int": return val instanceof Integer;
-            case "double": return val instanceof Double;
-            case "boolean": return val instanceof Boolean;
-            case "string": return val instanceof String;
-            default: return true;
+        String tn = normalizeTypeName(typeName);
+
+        // 可选：是否允许数值宽化（默认 false，若希望宽化改为 true）
+        final boolean allowNumericWideningForStatic = false;
+
+        switch (tn) {
+            case "int":
+                return val instanceof Integer;
+            case "long":
+                return val instanceof Long;
+            case "double":
+                if (val instanceof Double) return true;
+                if (allowNumericWideningForStatic && val instanceof Integer) return true; // 可选允许 int -> double
+                return false;
+            case "float":
+                if (val instanceof Float) return true;
+                if (allowNumericWideningForStatic && val instanceof Integer) return true;
+                return false;
+            case "boolean":
+                return val instanceof Boolean;
+            case "string":
+                return val instanceof String;
+            default:
+                // 对未知类型尽量使用类名匹配或容器判断（保守处理为 true）
+                return true;
         }
     }
 
