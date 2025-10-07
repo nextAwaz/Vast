@@ -5,12 +5,15 @@ import java.lang.reflect.Field;
 import java.util.*;
 
 import com.volcano.internal.exception.*;
+import com.volcano.registry.LibraryRegistry;
+import com.volcano.registry.VolcanoExternalLibrary;
 
 public class DoStatementHandler {
 
     private final VolcanoRuntime runtime;
     private final Map<String, Class<?>> importedClasses;
     private final Map<String, Object> variables;
+    private final LibraryRegistry libraryRegistry;
 
     public DoStatementHandler(VolcanoRuntime runtime,
                               Map<String, Class<?>> importedClasses,
@@ -18,6 +21,7 @@ public class DoStatementHandler {
         this.runtime = runtime;
         this.importedClasses = importedClasses;
         this.variables = variables;
+        this.libraryRegistry = runtime.getVolcanoVM().getLibraryRegistry();
     }
 
     public Object executeDoStatement(String className, String methodName, String arguments) throws Exception {
@@ -28,7 +32,7 @@ public class DoStatementHandler {
         String[] args = parseArguments(arguments);
 
         if (className.isEmpty()) {
-            // 情况1: 对外部程序操作
+            // 情况1: 对外部程序操作 - 迁移到新的库系统
             return handleExternalProgramOperation(methodName, args);
         } else if (methodName.isEmpty()) {
             // 情况2: 操作类的全局变量
@@ -71,19 +75,66 @@ public class DoStatementHandler {
             throw new NotGrammarException("Method name cannot be empty when no class is specified");
         }
 
-        // 获取外部程序（通过VM注册）
-        Object externalProgram = VolcanoVM.getGlobal("EXTERNAL_PROGRAM");
-        if (externalProgram == null) {
-            throw new PassParameterException("No external program is available for do statement");
+        // 新的逻辑：查找已加载的库
+        // 首先检查是否有名为 "ExternalExtension" 或 "ExternalWrapper" 的库
+        VolcanoExternalLibrary externalLib = findExternalLibrary();
+        if (externalLib != null) {
+            return invokeLibraryMethod(externalLib, methodName, args);
         }
 
-        // 新功能：如果外部程序实现了ExternalVolcanoExtension，调用init()初始化
-        if (externalProgram instanceof ExternalVolcanoExtension) {
-            ((ExternalVolcanoExtension) externalProgram).init();
+        // 如果没有找到外部库，尝试从局部变量中获取
+        Object externalProgram = variables.get("_external_extension");
+        if (externalProgram != null) {
+            return invokeExternalMethod(externalProgram, methodName, args);
         }
 
-        // 调用外部程序的方法
-        return invokeExternalMethod(externalProgram, methodName, args);
+        throw new PassParameterException("No external program or library is available for do statement");
+    }
+
+    private VolcanoExternalLibrary findLoadedLibrary(String libraryName) {
+        // 这里需要访问 LibraryRegistry 的已加载库
+        // 由于 LibraryRegistry 的 loadedLibraries 是私有的，我们需要添加一个公共方法
+        // 或者通过反射访问（不推荐）
+
+        // 临时方案：尝试通过类名查找
+        try {
+            // 这里简化处理，实际应该通过库注册表查找
+            return null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private VolcanoExternalLibrary findExternalLibrary() {
+        // 检查常见的外部库名称
+        String[] possibleNames = {"ExternalExtension", "ExternalWrapper"};
+        for (String name : possibleNames) {
+            VolcanoExternalLibrary lib = libraryRegistry.getLoadedLibrary(name);
+            if (lib != null) {
+                return lib;
+            }
+        }
+        return null;
+    }
+
+    private Object invokeLibraryMethod(VolcanoExternalLibrary library, String methodName, String[] args) throws Exception {
+        Class<?> clazz = library.getClass();
+        Object[] evaluatedArgs = evaluateArguments(args);
+        Method method = findBestMethod(clazz, methodName, evaluatedArgs);
+        if (method == null) {
+            throw NonExistentObject.methodNotFound(clazz.getSimpleName(), methodName);
+        }
+        return method.invoke(library, evaluatedArgs);
+    }
+
+    private VolcanoVM getVolcanoVM() {
+        // 需要通过 runtime 访问，这里需要为 VolcanoRuntime 添加 getVolcanoVM 方法
+        try {
+            java.lang.reflect.Method method = runtime.getClass().getMethod("getVolcanoVM");
+            return (VolcanoVM) method.invoke(runtime);
+        } catch (Exception e) {
+            throw new RuntimeException("Cannot access VolcanoVM from runtime", e);
+        }
     }
 
     private Object invokeExternalMethod(Object externalProgram, String methodName, String[] args) throws Exception {
@@ -337,15 +388,15 @@ public class DoStatementHandler {
 
     // ========= 修改点开始：添加支持带行号的 evaluateExpression 重载 =========
     /**
-     * Evaluate an expression, delegating to VolcanoRuntime.
-     * Backward-compatible single-arg version delegates to two-arg with unknown line (-1).
+     * 对表达式求值，委托给VolcanoRuntime。
+     * 向后兼容的单参数版本委托给带未知行（-1）的双参数版本。
      */
     private Object evaluateExpression(String expr) throws Exception {
         return evaluateExpression(expr, -1);
     }
 
     /**
-     * New overload that accepts a line number and forwards to runtime.evaluateExpression(expr, lineNumber)
+     * 接受行号并转发到运行时的新重载。evaluateExpression (expr lineNumber)
      */
     private Object evaluateExpression(String expr, int lineNumber) throws Exception {
         return runtime.evaluateExpression(expr, lineNumber);

@@ -1,10 +1,8 @@
+// VolcanoVM.java - 迁移到新系统
 package com.volcano.vm;
 
-import java.util.*;
-
-import com.volcano.internal.*;
 import com.volcano.registry.LibraryRegistry;
-import com.volcano.registry.VolcanoExternalLibrary;
+import java.util.*;
 
 public class VolcanoVM {
     static final Map<String, Class<?>> BUILTIN_CLASSES = new HashMap<>();
@@ -14,79 +12,78 @@ public class VolcanoVM {
     private final Map<String, Object> localVariables = new HashMap<>();
     private Object lastResult = null;
     private boolean debugMode = false;
+
+    // 库注册表实例
     private final LibraryRegistry libraryRegistry = LibraryRegistry.getInstance();
 
     static {
-        BUILTIN_CLASSES.put("Sys", Sys.class);
-        BUILTIN_CLASSES.put("Time", TimeUtil.class);
-        BUILTIN_CLASSES.put("Array", ArrayUtil.class);
-        BUILTIN_CLASSES.put("Ops", Ops.class);
-        BUILTIN_CLASSES.put("DataType", DataType.class);
+        BUILTIN_CLASSES.put("Sys", com.volcano.internal.Sys.class);
+        BUILTIN_CLASSES.put("Time", com.volcano.internal.TimeUtil.class);
+        BUILTIN_CLASSES.put("Array", com.volcano.internal.ArrayUtil.class);
+        BUILTIN_CLASSES.put("Ops", com.volcano.internal.Ops.class);
+        BUILTIN_CLASSES.put("DataType", com.volcano.internal.DataType.class);
+
+        // 注册标准库
+//        registerBuiltinLibrary("Standard", com.volcano.external.StandardLibrary.class);
     }
 
     public static void registerClass(String className, Class<?> clazz) {
         BUILTIN_CLASSES.put(className, clazz);
     }
 
-    public static void setGlobal(String name, Object value) {
-        GLOBAL_VARS.put(name, value);
-    }
-
-    public static Object getGlobal(String name) {
-        return GLOBAL_VARS.get(name);
-    }
-
     public void setDebugMode(boolean debug) {
         this.debugMode = debug;
+    }
+
+    public Map<String, Class<?>> getImportedClasses() {
+        return importedClasses;
+    }
+
+    public Map<String, Object> getLocalVariables() {
+        return localVariables;
+    }
+
+    public LibraryRegistry getLibraryRegistry() {
+        return libraryRegistry;
     }
 
     public void execute(List<String> sourceLines) throws Exception {
         executeWithResult(sourceLines);
     }
 
-    /**
-     * 执行脚本时支持库加载
-     */
     public Object executeWithResult(List<String> sourceLines) throws Exception {
-        // 在执行前可以加载所有库或按需加载
-        VolcanoRuntime runtime = new VolcanoRuntime(importedClasses, localVariables);
+        VolcanoRuntime runtime = new VolcanoRuntime(this, importedClasses, localVariables);
         runtime.setDebugMode(this.debugMode);
 
         // 检查是否需要加载所有库
         if (shouldLoadAllLibraries(sourceLines)) {
             libraryRegistry.loadAllLibraries(this);
+        } else {
+            // 检查并加载单个库导入
+            loadIndividualLibraries(sourceLines);
         }
 
         runtime.execute(sourceLines);
         this.lastResult = runtime.getLastResult();
         return this.lastResult;
     }
+
     private boolean shouldLoadAllLibraries(List<String> sourceLines) {
         return sourceLines.stream()
                 .anyMatch(line -> line.trim().equals("imp libs"));
     }
 
-    /**
-     * 获取当前导入的类映射
-     */
-    public Map<String, Class<?>> getImportedClasses() {
-        return importedClasses;
+    private void loadIndividualLibraries(List<String> sourceLines) {
+        for (String line : sourceLines) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("imp ")) {
+                String libName = trimmed.substring(4).trim();
+                if (!libName.equals("libs")) { // 跳过 "imp libs"
+                    libraryRegistry.loadLibraryByName(libName, this);
+                }
+            }
+        }
     }
-
-    /**
-     * 获取本地变量映射
-     */
-    public Map<String, Object> getLocalVariables() {
-        return localVariables;
-    }
-
-    /**
-     * 获取库注册表
-     */
-    public LibraryRegistry getLibraryRegistry() {
-        return libraryRegistry;
-    }
-
 
     public Object getLastResult() {
         return lastResult;
@@ -97,6 +94,7 @@ public class VolcanoVM {
         localVariables.clear();
         lastResult = null;
         debugMode = false;
+        libraryRegistry.cleanup();
     }
 
     public static Map<String, Class<?>> getBuiltinClasses() {
@@ -105,5 +103,17 @@ public class VolcanoVM {
 
     Object getGiveResult() {
         return null;
+    }
+
+    // 注册内置外置库的静态方法
+    public static void registerBuiltinLibrary(String name, Class<? extends com.volcano.registry.VolcanoExternalLibrary> libraryClass) {
+        LibraryRegistry.getInstance().registerBuiltinLibrary(name, libraryClass);
+    }
+
+    /**
+     * 获取库注册表信息（用于调试）
+     */
+    public String getLibraryRegistryInfo() {
+        return libraryRegistry.getLibraryInfo();
     }
 }

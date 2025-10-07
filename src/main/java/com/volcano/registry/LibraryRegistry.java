@@ -48,6 +48,45 @@ public class LibraryRegistry {
     }
 
     /**
+     * 注册库实例（而不是通过反射创建）
+     */
+    public RegistryToken registerLibraryInstance(String name, VolcanoExternalLibrary instance) {
+        if (name == null || instance == null) {
+            throw new IllegalArgumentException("Library name and instance cannot be null");
+        }
+
+        // 检查名称冲突
+        if (builtinLibraries.containsKey(name) || loadedLibraries.containsKey(name)) {
+            throw new IllegalStateException("Library name already registered: " + name);
+        }
+
+        RegistryToken token = new RegistryToken(name, instance.getClass(), true, 0);
+
+        // 直接放入已加载库映射
+        loadedLibraries.put(name, instance);
+
+        // 注册提供的类
+        Map<String, Class<?>> providedClasses = instance.getProvidedClasses();
+        for (Map.Entry<String, Class<?>> entry : providedClasses.entrySet()) {
+            String className = entry.getKey();
+            String existingLibrary = classNameToLibrary.get(className);
+            if (existingLibrary != null) {
+                System.err.printf("[Warning] Class name conflict: %s (from %s) conflicts with %s%n",
+                        className, name, existingLibrary);
+                continue;
+            }
+            classNameToLibrary.put(className, name);
+        }
+
+        // 注册自定义处理器
+        keywordHandlers.putAll(instance.getKeywordHandlers());
+        statementHandlers.putAll(instance.getStatementHandlers());
+
+        System.out.printf("[Info] Library instance registered: %s%n", name);
+        return token;
+    }
+
+    /**
      * 从外置库注册自身
      */
     public RegistryToken registerFromLibrary(String name, Class<? extends VolcanoExternalLibrary> libraryClass,
@@ -61,6 +100,20 @@ public class LibraryRegistry {
 
         loadedLibraries.put(name, instance);
         return token;
+    }
+
+    /**
+     * 获取已加载的库实例
+     */
+    public VolcanoExternalLibrary getLoadedLibrary(String libraryName) {
+        return loadedLibraries.get(libraryName);
+    }
+
+    /**
+     * 获取所有已加载的库
+     */
+    public Map<String, VolcanoExternalLibrary> getLoadedLibraries() {
+        return Collections.unmodifiableMap(loadedLibraries);
     }
 
     /**

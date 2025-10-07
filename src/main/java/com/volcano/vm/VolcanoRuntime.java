@@ -16,6 +16,7 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
     private final Map<String, String> variableTypes = new HashMap<>(); // 存储静态类型声明（如 "int","double","boolean","string"）
     private final Stack<LoopContext> loopStack = new Stack<>();
     private final LibraryRegistry libraryRegistry;
+    private final VolcanoVM vm;
 
     private List<Instruction> instructions = new ArrayList<>();
     private int pc = 0; // 程序计数器
@@ -30,12 +31,15 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
     // 未初始化变量哨兵
     private static final Object UNINITIALIZED = new Object();
 
-    public VolcanoRuntime(Map<String, Class<?>> importedClasses, Map<String, Object> variables) {
+    public VolcanoRuntime(VolcanoVM vm, Map<String, Class<?>> importedClasses, Map<String, Object> variables) {
+        this.vm = vm;
         this.importedClasses = importedClasses;
         this.variables = variables;
         this.methodInvocationHandler = new MethodInvocationHandler(this, importedClasses);
         this.doStatementHandler = new DoStatementHandler(this, importedClasses, variables);
-        this.libraryRegistry = LibraryRegistry.getInstance();
+
+        // 使用 VolcanoVM 的库注册表
+        this.libraryRegistry = vm.getLibraryRegistry();
 
         // 自动导入 DataType 类
         this.importedClasses.put("DataType", DataType.class);
@@ -66,13 +70,11 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
         }
     }
 
-    public void execute(List<String> sourceLines) throws Exception {
-        // 新功能: 初始化外部程序（如果存在）
-        Object external = VolcanoVM.getGlobal("EXTERNAL_PROGRAM");
-        if (external instanceof ExternalVolcanoExtension) {
-            ((ExternalVolcanoExtension) external).init();
-        }
+    public VolcanoVM getVolcanoVM() {
+        return vm;
+    }
 
+    public void execute(List<String> sourceLines) throws Exception {
         // 预编译为指令序列
         compile(sourceLines);
 
@@ -81,11 +83,6 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
             Instruction instr = instructions.get(pc);
             executeInstruction(instr);
             pc++;
-        }
-
-        // 新功能: 清理外部程序（如果存在）
-        if (external instanceof ExternalVolcanoExtension) {
-            ((ExternalVolcanoExtension) external).cleanup();
         }
     }
 
@@ -188,7 +185,12 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
     }
 
     private StatementHandler findCustomStatementHandler(String operand) {
-        for (String prefix : libraryRegistry.getStatementHandlers().keySet()) {
+        Map<String, StatementHandler> handlers = libraryRegistry.getStatementHandlers();
+        if (handlers == null || handlers.isEmpty()) {
+            return null;
+        }
+
+        for (String prefix : handlers.keySet()) {
             if (operand.startsWith(prefix)) {
                 return libraryRegistry.getStatementHandler(prefix);
             }
@@ -430,12 +432,21 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
     }
 
     private void handleImport(String className) throws Exception {
-        // 类似原有逻辑
+        // 首先检查是否是库名
+        if (libraryRegistry.getBuiltinLibraryNames().contains(className)) {
+            // 加载库
+            libraryRegistry.loadLibrary(className, vm);
+            debugPrint("@ Import library: " + className);
+            return;
+        }
+
+        // 原有的类导入逻辑
         Class<?> clazz = VolcanoVM.BUILTIN_CLASSES.get(className);
         if (clazz == null) {
             clazz = Class.forName(className);
         }
         importedClasses.put(className, clazz);
+        debugPrint("@ Import class: " + className);
     }
 
     private void handleVarDecl(String declaration) throws Exception {
