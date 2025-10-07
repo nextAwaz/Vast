@@ -494,21 +494,96 @@ public class VolcanoRuntime {//Volcano Runtime的核心，也是最复杂的一�
     }
 
     /**
-     * 增加 change 语句处理： change targetVar::targetType = sourceVar::sourceType
-     * 将 sourceVar 的值按 sourceType 解析并转换为 targetType，赋给 targetVar 并标记 targetVar 的静态类型为 targetType。
+     * 增加 change 语句处理： 支持多种形式：
+     *  - target::targetType = source::sourceType
+     *  - type::var = var    （type 在左侧的另一种书写）
+     *  - target = sourceType::source
+     *  - target = source
+     *
+     *  语义：
+     *   - 如果 targetType 可知（直接写出或从 sourceType 推断），则把 source 的值转换为 targetType 并赋值到 target，同时将 target 标记为该静态类型（覆盖旧类型）。
+     *   - 如果 target 没有类型而 source 也没有类型（change a = b），允许执行但打印非致命警告（尤其当 a == b 时），并将 a 设为自由类型（移除静态类型声明，如果存在）。
      */
     private void handleChangeStatement(String operand, int lineNumber) throws Exception {
-        // operand 已经是 "target::t1 = source::t2" 形式，做严格解析
-        Pattern p = Pattern.compile("^([a-zA-Z_][a-zA-Z0-9_]*)::([a-zA-Z]+)\\s*=\\s*([a-zA-Z_][a-zA-Z0-9_]*)::([a-zA-Z]+)$");
-        Matcher m = p.matcher(operand);
-        if (!m.find()) {
-            throw NotGrammarException.invalidStatementStructure("change statement", "Invalid syntax: " + operand, lineNumber);
+        String raw = operand.trim();
+
+        // 分割左右两部分
+        int eqIndex = raw.indexOf('=');
+        if (eqIndex == -1) {
+            throw NotGrammarException.invalidStatementStructure("change statement", "Missing '=' in " + raw, lineNumber);
         }
 
-        String targetVar = m.group(1);
-        String targetType = normalizeTypeName(m.group(2));
-        String sourceVar = m.group(3);
-        String sourceType = normalizeTypeName(m.group(4));
+        String left = raw.substring(0, eqIndex).trim();
+        String right = raw.substring(eqIndex + 1).trim();
+
+        // 帮助函数：判断 token 是否是类型（支持多种别名）
+        java.util.function.Predicate<String> isTypeToken = (s) -> {
+            if (s == null) return false;
+            String n = s.trim().toLowerCase();
+            switch (n) {
+                case "int": case "integer": case "long":
+                case "double": case "float":
+                case "bool": case "boolean":
+                case "string": case "str":
+                case "null":
+                    return true;
+                default:
+                    return false;
+            }
+        };
+
+        String targetVar = null;
+        String targetType = null;
+        String sourceVar = null;
+        String sourceType = null;
+
+        // 解析左侧（可能含 ::）
+        if (left.contains("::")) {
+            String[] leftParts = left.split("::", 2);
+            String a = leftParts[0].trim();
+            String b = leftParts[1].trim();
+            if (isTypeToken.test(a)) {
+                // 写法 like "int::name" (type::var)
+                targetType = normalizeTypeName(a);
+                targetVar = b;
+            } else if (isTypeToken.test(b)) {
+                // 写法 like "name::int" (var::type)
+                targetVar = a;
+                targetType = normalizeTypeName(b);
+            } else {
+                throw NotGrammarException.invalidStatementStructure("change statement", "Unrecognized left side '" + left + "'", lineNumber);
+            }
+        } else {
+            targetVar = left;
+        }
+
+        // 解析右侧（可能含 ::）
+        if (right.contains("::")) {
+            String[] rightParts = right.split("::", 2);
+            String a = rightParts[0].trim();
+            String b = rightParts[1].trim();
+            if (isTypeToken.test(a)) {
+                // 写法 like "string::name" (type::var)
+                sourceType = normalizeTypeName(a);
+                sourceVar = b;
+            } else if (isTypeToken.test(b)) {
+                // 写法 like "name::string" (var::type)
+                sourceVar = a;
+                sourceType = normalizeTypeName(b);
+            } else {
+                throw NotGrammarException.invalidStatementStructure("change statement", "Unrecognized right side '" + right + "'", lineNumber);
+            }
+        } else {
+            sourceVar = right;
+        }
+
+        // 基本检查：变量名必须为合法标识符
+        if (targetVar == null || !targetVar.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
+            throw NotGrammarException.invalidStatementStructure("change statement", "Invalid target variable: " + left, lineNumber);
+        }
+        if (sourceVar == null || !sourceVar.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
+            throw NotGrammarException.invalidStatementStructure("change statement", "Invalid source variable: " + right, lineNumber);
+        }
 
         // 检查 sourceVar 存在且已初始化
         if (!variables.containsKey(sourceVar)) {
@@ -519,8 +594,8 @@ public class VolcanoRuntime {//Volcano Runtime的核心，也是最复杂的一�
             throw new NullTokenException(sourceVar, "change statement");
         }
 
-        // 如果 sourceVar 有静态类型声明，确认它与提供的 sourceType 一致（否则可能是用户错误）
-        if (variableTypes.containsKey(sourceVar)) {
+        // 如果 sourceVar 有静态类型声明，而用户在 change 中指定了 sourceType，则二者必须一致
+        if (sourceType != null && variableTypes.containsKey(sourceVar)) {
             String declaredSourceType = variableTypes.get(sourceVar);
             if (!declaredSourceType.equals(sourceType)) {
                 throw new NotGrammarException("Source variable '" + sourceVar + "' declared as " + declaredSourceType +
@@ -528,22 +603,46 @@ public class VolcanoRuntime {//Volcano Runtime的核心，也是最复杂的一�
             }
         }
 
-        // 尝试把 sourceVal 转换为 targetType
-        Object converted = convertToType(sourceVal, targetType);
-        if (converted == null && targetType.equals("string")) {
-            converted = "null";
+        // 决定最终的目标类型：优先使用显式 targetType，其次使用 sourceType（如果 target 未指定）
+        String finalTargetType = targetType != null ? targetType : sourceType;
+
+        Object converted;
+        if (finalTargetType != null) {
+            // 需要转换
+            converted = convertToType(sourceVal, finalTargetType);
+            // 将 targetVar 标记为该静态类型（覆盖旧类型）
+            variableTypes.put(targetVar, finalTargetType);
+        } else {
+            // 没有任何类型信息：直接赋值，但这通常是无意义的（尤其 a = a）
+            if (targetVar.equals(sourceVar)) {
+                System.err.println("[Warning] change statement '" + raw + "' has no type change and is a no-op");
+            } else {
+                // 当没有类型时，把目标设为自由类型（移除静态声明，如果存在）
+                if (variableTypes.containsKey(targetVar)) {
+                    System.err.println("[Warning] change statement '" + raw + "' will remove static type of '" + targetVar + "'");
+                    variableTypes.remove(targetVar);
+                }
+            }
+            converted = sourceVal;
         }
 
-        // 存储到 targetVar 并设置静态类型
+        // 存储到 targetVar（允许与 sourceVar 相同）
         variables.put(targetVar, converted);
-        variableTypes.put(targetVar, targetType);
 
-        debugPrint("@ Change: %s set to %s (type %s) from %s::%s", targetVar, converted, targetType, sourceVar, sourceType);
+        debugPrint("@ Change: %s set to %s (effective type=%s) from %s%s",
+                targetVar, converted, finalTargetType == null ? "free" : finalTargetType, sourceVar,
+                sourceType == null ? "" : ("::" + sourceType));
     }
 
     /**
      * 将对象转换为指定的目标类型（严格转换：若不可转换则抛出 NotGrammarException）
      * 统一所有转换逻辑入口，避免不同路径产生不一致行为。
+     *
+     * 新增/修改：
+     *  - string -> int : 返回字符串首字符的 Unicode code point（对于空串返回 0）
+     *  - 支持 float/double 同一处理
+     *  - 支持 bool 从 "1"/"0" 或字符串/数字转换
+     *  - 支持 targetType "null" 将值设为 null
      */
     private Object convertToType(Object value, String targetType) {
         if (targetType == null) return value;
@@ -556,33 +655,59 @@ public class VolcanoRuntime {//Volcano Runtime的核心，也是最复杂的一�
                     if (value instanceof Integer) return value;
                     if (value instanceof Number) return ((Number) value).intValue();
                     if (value instanceof Boolean) return (Boolean) value ? 1 : 0;
-                    if (value instanceof String) return Integer.parseInt((String) value);
+                    if (value instanceof String) {
+                        String s = (String) value;
+                        if (s.isEmpty()) return 0;
+                        // 返回首字符的 Unicode code point（满足“unicode字符码”的要求）
+                        int codePoint = s.codePointAt(0);
+                        return codePoint;
+                    }
                     throw new NotGrammarException("Cannot convert type " + (value != null ? value.getClass().getSimpleName() : "null") + " to int");
                 case "long":
                     if (value instanceof Long) return value;
                     if (value instanceof Number) return ((Number) value).longValue();
                     if (value instanceof Boolean) return (Boolean) value ? 1L : 0L;
-                    if (value instanceof String) return Long.parseLong((String) value);
+                    if (value instanceof String) {
+                        try { return Long.parseLong((String) value); }
+                        catch (NumberFormatException e) { throw new NotGrammarException("Cannot convert value to long: " + value); }
+                    }
                     throw new NotGrammarException("Cannot convert type " + (value != null ? value.getClass().getSimpleName() : "null") + " to long");
                 case "double":
                     if (value instanceof Double) return value;
                     if (value instanceof Number) return ((Number) value).doubleValue();
                     if (value instanceof Boolean) return (Boolean) value ? 1.0 : 0.0;
-                    if (value instanceof String) return Double.parseDouble((String) value);
+                    if (value instanceof String) {
+                        try { return Double.parseDouble((String) value); }
+                        catch (NumberFormatException e) { throw new NotGrammarException("Cannot convert value to double: " + value); }
+                    }
                     throw new NotGrammarException("Cannot convert type " + (value != null ? value.getClass().getSimpleName() : "null") + " to double");
                 case "float":
-                    if (value instanceof Float) return value;
-                    if (value instanceof Number) return ((Number) value).floatValue();
-                    if (value instanceof Boolean) return (Boolean) value ? 1f : 0f;
-                    if (value instanceof String) return Float.parseFloat((String) value);
+                    // 对外暴露 float，但内部仍用 double 表示 - normalizeTypeName 已经将 float->double，保留实现
+                    if (value instanceof Double) return ((Double) value).doubleValue();
+                    if (value instanceof Number) return ((Number) value).doubleValue();
+                    if (value instanceof Boolean) return (Boolean) value ? 1.0 : 0.0;
+                    if (value instanceof String) {
+                        try { return Double.parseDouble((String) value); }
+                        catch (NumberFormatException e) { throw new NotGrammarException("Cannot convert value to float: " + value); }
+                    }
                     throw new NotGrammarException("Cannot convert type " + (value != null ? value.getClass().getSimpleName() : "null") + " to float");
                 case "boolean":
                     if (value instanceof Boolean) return value;
                     if (value instanceof Number) return ((Number) value).doubleValue() != 0;
-                    if (value instanceof String) return !((String) value).isEmpty();
+                    if (value instanceof String) {
+                        String s = ((String) value).trim();
+                        if ("1".equals(s)) return true;
+                        if ("0".equals(s)) return false;
+                        if (s.equalsIgnoreCase("true")) return true;
+                        if (s.equalsIgnoreCase("false")) return false;
+                        // 非空字符串视为 true（保守策略）
+                        return !s.isEmpty();
+                    }
                     throw new NotGrammarException("Cannot convert type " + (value != null ? value.getClass().getSimpleName() : "null") + " to boolean");
                 case "string":
                     return value != null ? value.toString() : "null";
+                case "null":
+                    return null;
                 default:
                     // 对于未知的自定义/对象类型，若已经是目标类型的实例则返回，否则尽量直接返回原值（或抛出根据策略）
                     return value;
