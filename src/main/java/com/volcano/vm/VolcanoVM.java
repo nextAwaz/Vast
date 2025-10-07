@@ -60,6 +60,10 @@ public class VolcanoVM {
         debugMode = false;
     }
 
+    public static Map<String, Class<?>> getBuiltinClasses() {
+        return Collections.unmodifiableMap(BUILTIN_CLASSES);
+    }
+
     Object getGiveResult() {
         return null;
     }
