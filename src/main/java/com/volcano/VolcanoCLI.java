@@ -7,7 +7,7 @@ import java.util.*;
 import com.volcano.vm.VolcanoVM;
 
 public class VolcanoCLI {
-    static String ver = "0.0.8";//版本信息
+    static String ver = "0.0.9";//版本信息
     public static void main(String[] args) {
         if (args.length == 0) {
             printUsage();
