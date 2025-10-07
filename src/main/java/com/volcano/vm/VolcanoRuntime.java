@@ -196,7 +196,8 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
         return null;
     }
     private String extractStatementPrefix(String operand) {
-        return operand.split("\\s+")[0];
+        String[] parts = operand.split("\\s+", 2);
+        return parts.length > 0 ? parts[0] : "";
     }
 
     private String extractStatementArguments(String operand) {
@@ -1103,7 +1104,8 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
     Object evaluateExpression(String expr, int lineNumber) throws Exception{
         expr = (expr == null ? "" : expr.trim());
 
-        if (isCustomKeyword(expr)) {// 检查是否是自定义关键字
+        // 检查是否是自定义关键字
+        if (isCustomKeyword(expr)) {
             return handleCustomKeyword(expr, lineNumber);
         }
 
