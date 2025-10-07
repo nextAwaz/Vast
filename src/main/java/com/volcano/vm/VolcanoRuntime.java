@@ -441,7 +441,6 @@ public class VolcanoRuntime {//Volcano Runtime的核心，也是最复杂的一�
         }
 
         Object value = evaluateExpression(expr, lineNumber);
-
         if (value == UNINITIALIZED) {
             throw new NullTokenException(varName, "variable declaration");
         }
@@ -454,7 +453,7 @@ public class VolcanoRuntime {//Volcano Runtime的核心，也是最复杂的一�
                         (value != null ? value.getClass().getSimpleName() : "null") +
                         " to variable '" + varName + "' declared as " + normType);
             }
-            variableTypes.put(varName, normType);
+            variableTypes.put(varName, normType); // 标记为静态类型
         }
 
         variables.put(varName, value);
@@ -1315,28 +1314,43 @@ public class VolcanoRuntime {//Volcano Runtime的核心，也是最复杂的一�
         content = content.trim();
         if (content.isEmpty()) return;
 
-        // 检查是否是 var 声明
-        if (content.startsWith("var ")) {
-            tokens.add(new VarDeclaration(content.substring(4).trim()));
-        } else {
-            // 普通内容，进行表达式求值
-            tokens.add(evaluateExpression(content, lineNumber));
+        // 识别以 var 开头的多种形式：'var x', 'var(x)', 'var (x)'
+        if (content.startsWith("var")) {
+            // content 长度可能正好是 3("var") 或后面跟空格或 '('
+            if (content.length() == 3 || Character.isWhitespace(content.charAt(3)) || content.charAt(3) == '(') {
+                // 传入声明体（去掉 var 前缀）
+                tokens.add(new VarDeclaration(content.substring(3).trim()));
+                return;
+            }
         }
+
+        // 识别以 (type) 开头但没有 var 的显式类型声明，例如 "(string) a = \"OK!\""，
+        // 这种形式历史上是允许的，但解析入口可能未把它当作声明处理，导致被误解析为方法调用等。
+        if (content.startsWith("(")) {
+            java.util.regex.Pattern p = java.util.regex.Pattern.compile("^\\(\\s*[^)]+\\s*\\)\\s*[a-zA-Z_][a-zA-Z0-9_]*(?:\\s*=.*)?$");
+            if (p.matcher(content).matches()) {
+                tokens.add(new VarDeclaration(content));
+                return;
+            }
+        }
+
+        // 其他情况：当作表达式求值
+        tokens.add(evaluateExpression(content, lineNumber));
     }
 
     /**
      * 变量声明类
      */
     private static class VarDeclaration {
-        final String variableName;
+        final String declaration;
 
-        VarDeclaration(String variableName) {
-            this.variableName = variableName;
+        VarDeclaration(String declaration) {
+            this.declaration = declaration;
         }
 
         @Override
         public String toString() {
-            return "var " + variableName;
+            return "var " + declaration;
         }
     }
 
