@@ -115,13 +115,19 @@ public class DoStatementHandler {
     }
 
     private VariableOperationResult processVariableOperation(Class<?> clazz, String arg) throws Exception {
-        if (arg.startsWith("var ")) {
-            // 声明新变量
-            return handleVariableDeclaration(clazz, arg.substring(4).trim());
+        // 识别 var 声明时，不再只检查 "var "（带空格）——也接受 "var(" 这种写法
+        if (arg.startsWith("var")) {
+            if (arg.length() == 3 || Character.isWhitespace(arg.charAt(3)) || arg.charAt(3) == '(') {
+                // 声明新变量（传入声明体）
+                return handleVariableDeclaration(clazz, arg.substring(3).trim());
+            }
         } else {
             // 赋值现有变量
             return handleVariableAssignment(clazz, arg);
         }
+
+        // 走默认分支（保持原逻辑）
+        return handleVariableAssignment(clazz, arg);
     }
 
     private VariableOperationResult handleVariableDeclaration(Class<?> clazz, String declaration) throws Exception {
