@@ -6,7 +6,7 @@
 
     <groupId>com.volcano</groupId>
     <artifactId>Volcano_Script</artifactId>
-    <version>0.0.8</version>
+    <version>0.0.9</version>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>
