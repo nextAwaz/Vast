@@ -3,6 +3,8 @@ package com.volcano.vm;
 import java.util.*;
 
 import com.volcano.internal.*;
+import com.volcano.registry.LibraryRegistry;
+import com.volcano.registry.VolcanoExternalLibrary;
 
 public class VolcanoVM {
     static final Map<String, Class<?>> BUILTIN_CLASSES = new HashMap<>();
@@ -12,6 +14,7 @@ public class VolcanoVM {
     private final Map<String, Object> localVariables = new HashMap<>();
     private Object lastResult = null;
     private boolean debugMode = false;
+    private final LibraryRegistry libraryRegistry = LibraryRegistry.getInstance();
 
     static {
         BUILTIN_CLASSES.put("Sys", Sys.class);
@@ -41,13 +44,49 @@ public class VolcanoVM {
         executeWithResult(sourceLines);
     }
 
+    /**
+     * 执行脚本时支持库加载
+     */
     public Object executeWithResult(List<String> sourceLines) throws Exception {
+        // 在执行前可以加载所有库或按需加载
         VolcanoRuntime runtime = new VolcanoRuntime(importedClasses, localVariables);
         runtime.setDebugMode(this.debugMode);
+
+        // 检查是否需要加载所有库
+        if (shouldLoadAllLibraries(sourceLines)) {
+            libraryRegistry.loadAllLibraries(this);
+        }
+
         runtime.execute(sourceLines);
         this.lastResult = runtime.getLastResult();
         return this.lastResult;
     }
+    private boolean shouldLoadAllLibraries(List<String> sourceLines) {
+        return sourceLines.stream()
+                .anyMatch(line -> line.trim().equals("imp libs"));
+    }
+
+    /**
+     * 获取当前导入的类映射
+     */
+    public Map<String, Class<?>> getImportedClasses() {
+        return importedClasses;
+    }
+
+    /**
+     * 获取本地变量映射
+     */
+    public Map<String, Object> getLocalVariables() {
+        return localVariables;
+    }
+
+    /**
+     * 获取库注册表
+     */
+    public LibraryRegistry getLibraryRegistry() {
+        return libraryRegistry;
+    }
+
 
     public Object getLastResult() {
         return lastResult;

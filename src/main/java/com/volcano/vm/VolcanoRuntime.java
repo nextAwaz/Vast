@@ -6,12 +6,16 @@ import java.util.regex.Pattern;
 import java.lang.reflect.*;
 import com.volcano.internal.*;
 import com.volcano.internal.exception.*;
+import com.volcano.registry.KeywordHandler;
+import com.volcano.registry.LibraryRegistry;
+import com.volcano.registry.StatementHandler;
 
-public class VolcanoRuntime {//Volcano Runtime的核心，也是最复杂的一个类
+public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
     private final Map<String, Class<?>> importedClasses;
     private final Map<String, Object> variables;
     private final Map<String, String> variableTypes = new HashMap<>(); // 存储静态类型声明（如 "int","double","boolean","string"）
     private final Stack<LoopContext> loopStack = new Stack<>();
+    private final LibraryRegistry libraryRegistry;
 
     private List<Instruction> instructions = new ArrayList<>();
     private int pc = 0; // 程序计数器
@@ -31,6 +35,7 @@ public class VolcanoRuntime {//Volcano Runtime的核心，也是最复杂的一�
         this.variables = variables;
         this.methodInvocationHandler = new MethodInvocationHandler(this, importedClasses);
         this.doStatementHandler = new DoStatementHandler(this, importedClasses, variables);
+        this.libraryRegistry = LibraryRegistry.getInstance();
 
         // 自动导入 DataType 类
         this.importedClasses.put("DataType", DataType.class);
@@ -141,6 +146,16 @@ public class VolcanoRuntime {//Volcano Runtime的核心，也是最复杂的一�
     }
 
     private void executeInstruction(Instruction instr) throws Exception {
+        // 检查是否是自定义语句
+        if (instr.opCode == OpCode.CALL) {
+            StatementHandler handler = findCustomStatementHandler(instr.operand);
+            if (handler != null) {
+                handler.handle(this, extractStatementPrefix(instr.operand),
+                        extractStatementArguments(instr.operand), instr.lineNumber);
+                return;
+            }
+        }
+
         switch (instr.opCode) {
             case IMPORT:
                 handleImport(instr.operand);
@@ -172,6 +187,22 @@ public class VolcanoRuntime {//Volcano Runtime的核心，也是最复杂的一�
         }
     }
 
+    private StatementHandler findCustomStatementHandler(String operand) {
+        for (String prefix : libraryRegistry.getStatementHandlers().keySet()) {
+            if (operand.startsWith(prefix)) {
+                return libraryRegistry.getStatementHandler(prefix);
+            }
+        }
+        return null;
+    }
+    private String extractStatementPrefix(String operand) {
+        return operand.split("\\s+")[0];
+    }
+
+    private String extractStatementArguments(String operand) {
+        String[] parts = operand.split("\\s+", 2);
+        return parts.length > 1 ? parts[1] : "";
+    }
 
 
     /**
@@ -1067,9 +1098,14 @@ public class VolcanoRuntime {//Volcano Runtime的核心，也是最复杂的一�
 
     /**
      * 表达式求值入口（带行号）
+     * 增强的表达式求值，支持自定义关键字
      */
     Object evaluateExpression(String expr, int lineNumber) throws Exception{
         expr = (expr == null ? "" : expr.trim());
+
+        if (isCustomKeyword(expr)) {// 检查是否是自定义关键字
+            return handleCustomKeyword(expr, lineNumber);
+        }
 
         // 移除行内注释（# 之后的内容）
         int commentIndex = expr.indexOf('#');
@@ -1123,6 +1159,24 @@ public class VolcanoRuntime {//Volcano Runtime的核心，也是最复杂的一�
 
         // 如果都不是，返回原始字符串（可能是未引用的字符串）
         return expr;
+    }
+
+    private boolean isCustomKeyword(String expr) {
+        // 简单的关键字检测逻辑
+        String[] parts = expr.split("\\s+", 2);
+        return parts.length > 0 && libraryRegistry.getKeywordHandler(parts[0]) != null;
+    }
+    private Object handleCustomKeyword(String expr, int lineNumber) throws Exception {
+        String[] parts = expr.split("\\s+", 2);
+        String keyword = parts[0];
+        String arguments = parts.length > 1 ? parts[1] : "";
+
+        KeywordHandler handler = libraryRegistry.getKeywordHandler(keyword);
+        if (handler != null) {
+            return handler.handle(this, keyword, arguments, lineNumber);
+        }
+
+        throw new NotGrammarException("Unknown keyword: " + keyword);
     }
 
     /**
