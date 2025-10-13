@@ -6,7 +6,7 @@
 
     <groupId>com.volcano</groupId>
     <artifactId>Volcano_Script</artifactId>
-    <version>0.0.9</version>
+    <version>0.0.10</version>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>
@@ -15,5 +15,5 @@
     </properties>
 
 </project>
-<!--Do I need to add some cumbersome dependences to it?-->
+<!--Do I need to add some cumbersome dependencies to it?-->
 <!--我有必要为它添加一些笨重的外置库吗？-->

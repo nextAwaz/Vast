@@ -22,9 +22,13 @@ public class VolcanoVM {
         BUILTIN_CLASSES.put("Array", com.volcano.internal.ArrayUtil.class);
         BUILTIN_CLASSES.put("Ops", com.volcano.internal.Ops.class);
         BUILTIN_CLASSES.put("DataType", com.volcano.internal.DataType.class);
+    }
 
-        // 注册标准库
-//        registerBuiltinLibrary("Standard", com.volcano.external.StandardLibrary.class);
+    public VolcanoVM() {
+        // 自动导入所有内置类
+        for (Map.Entry<String, Class<?>> entry : BUILTIN_CLASSES.entrySet()) {
+            importedClasses.put(entry.getKey(), entry.getValue());
+        }
     }
 
     public static void registerClass(String className, Class<?> clazz) {
@@ -59,7 +63,7 @@ public class VolcanoVM {
         if (shouldLoadAllLibraries(sourceLines)) {
             libraryRegistry.loadAllLibraries(this);
         } else {
-            // 检查并加载单个库导入
+            // 检查并加载单个库导入（非内置库）
             loadIndividualLibraries(sourceLines);
         }
 
@@ -67,6 +71,7 @@ public class VolcanoVM {
         this.lastResult = runtime.getLastResult();
         return this.lastResult;
     }
+
 
     private boolean shouldLoadAllLibraries(List<String> sourceLines) {
         return sourceLines.stream()
@@ -78,7 +83,8 @@ public class VolcanoVM {
             String trimmed = line.trim();
             if (trimmed.startsWith("imp ")) {
                 String libName = trimmed.substring(4).trim();
-                if (!libName.equals("libs")) { // 跳过 "imp libs"
+                // 跳过内置库和 "imp libs"
+                if (!BUILTIN_CLASSES.containsKey(libName) && !libName.equals("libs")) {
                     libraryRegistry.loadLibraryByName(libName, this);
                 }
             }

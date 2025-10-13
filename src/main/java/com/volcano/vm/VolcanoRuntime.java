@@ -125,9 +125,9 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
             } else if (trimmedLine.startsWith("do")) {
                 DoInstructionData data = parseDoStatement(trimmedLine);
                 instructions.add(new Instruction(OpCode.DO, "", i, indent, data));
-            } else if (trimmedLine.startsWith("change ")) {
-                // 新增 change 语句
-                instructions.add(new Instruction(OpCode.CHANGE, trimmedLine.substring(7).trim(), i, indent));
+            } else if (trimmedLine.startsWith("swap")) {
+                SwapInstructionData data = parseSwapStatement(trimmedLine);
+                instructions.add(new Instruction(OpCode.SWAP, "", i, indent, data));
             } else if (trimmedLine.contains("=") && !trimmedLine.contains("(") && !trimmedLine.contains(")")) {
                 instructions.add(new Instruction(OpCode.VAR_ASSIGN, trimmedLine, i, indent));
             } else {
@@ -178,8 +178,8 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
             case DO:
                 handleDoStatement((DoInstructionData) instr.extraData);
                 break;
-            case CHANGE:
-                handleChangeStatement(instr.operand, instr.lineNumber);
+            case SWAP:
+                handleSwapStatement((SwapInstructionData) instr.extraData);
                 break;
         }
     }
@@ -205,6 +205,91 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
     private String extractStatementArguments(String operand) {
         String[] parts = operand.split("\\s+", 2);
         return parts.length > 1 ? parts[1] : "";
+    }
+
+    /**
+     * 处理 swap 语句 - 交换两个变量的值
+     */
+    private void handleSwapStatement(SwapInstructionData data) throws Exception {
+        String varA = data.varA;
+        String varB = data.varB;
+
+        // 检查变量是否存在
+        if (!variables.containsKey(varA)) {
+            throw NonExistentObject.variableNotFound(varA);
+        }
+        if (!variables.containsKey(varB)) {
+            throw NonExistentObject.variableNotFound(varB);
+        }
+
+        Object valueA = variables.get(varA);
+        Object valueB = variables.get(varB);
+
+        // 检查是否未初始化
+        if (valueA == UNINITIALIZED) {
+            throw new NullTokenException(varA, "swap statement");
+        }
+        if (valueB == UNINITIALIZED) {
+            throw new NullTokenException(varB, "swap statement");
+        }
+
+        // 检查类型兼容性
+        String typeA = variableTypes.get(varA);
+        String typeB = variableTypes.get(varB);
+
+        // 类型检查规则：
+        // 1. 两个变量都是自由类型（没有静态类型声明） - 允许交换
+        // 2. 两个变量有相同的静态类型 - 允许交换
+        // 3. 其他情况 - 报错
+        if (typeA != null && typeB != null) {
+            // 两个都有静态类型，必须相同
+            if (!typeA.equals(typeB)) {
+                throw new NotGrammarException("Cannot swap variables of different types: " +
+                        varA + " (" + typeA + ") and " + varB + " (" + typeB + ")");
+            }
+        } else if (typeA != null || typeB != null) {
+            // 一个有静态类型，一个没有 - 不允许
+            throw new NotGrammarException("Cannot swap static-typed variable with free-typed variable: " +
+                    varA + " and " + varB);
+        }
+
+        // 执行交换
+        variables.put(varA, valueB);
+        variables.put(varB, valueA);
+
+        debugPrint("@ Swap: %s (%s) <-> %s (%s)", varA, valueA, varB, valueB);
+    }
+
+    /**
+     * 解析 swap 语句
+     * 格式: swap(varA)(varB)
+     */
+    private SwapInstructionData parseSwapStatement(String line) {
+        // 移除行内注释
+        int commentIndex = line.indexOf('#');
+        if (commentIndex != -1) {
+            line = line.substring(0, commentIndex).trim();
+        }
+
+        // 提取第一个括号内的内容（变量A）
+        int firstParenStart = line.indexOf('(');
+        int firstParenEnd = findMatchingParen(line, firstParenStart);
+        if (firstParenStart == -1 || firstParenEnd == -1) {
+            throw new NotGrammarException("Invalid swap statement: missing first parentheses");
+        }
+
+        String varA = line.substring(firstParenStart + 1, firstParenEnd).trim();
+
+        // 提取第二个括号内的内容（变量B）
+        int secondParenStart = line.indexOf('(', firstParenEnd + 1);
+        int secondParenEnd = findMatchingParen(line, secondParenStart);
+        if (secondParenStart == -1 || secondParenEnd == -1) {
+            throw new NotGrammarException("Invalid swap statement: missing second parentheses");
+        }
+
+        String varB = line.substring(secondParenStart + 1, secondParenEnd).trim();
+
+        return new SwapInstructionData(varA, varB);
     }
 
 
@@ -459,49 +544,72 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
      *   name = expr
      *   (type) name
      *   (type) name = expr
+     *   <p>
+     * 增强的 var 声明处理，支持类型转换语法：
+     *   var (newType) newName = (oldType) oldName
+     *   var (newType) newName = oldName
+     *   var newName = (oldType) oldName
      */
     private void handleVarDecl(String declaration, int lineNumber) throws Exception {
-        // 支持 (type) 前缀
-        // 正则: optional (type) 变量名 optional = expr
-        Pattern p = Pattern.compile("^(?:\\s*\\(([^)]+)\\)\\s*)?([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?:=\\s*(.+))?$");
+        // 支持类型转换的增强正则表达式
+        // 匹配: (newType) newName = (oldType) oldName
+        // 或者: (newType) newName = oldName
+        // 或者: newName = (oldType) oldName
+        Pattern p = Pattern.compile("^(?:\\s*\\(([^)]+)\\)\\s*)?([a-zA-Z_][a-zA-Z0-9_]*)\\s*=\\s*(?:(?:\\(([^)]+)\\)\\s*)?(.+))?$");
         Matcher m = p.matcher(declaration);
+
         if (!m.matches()) {
+            // 尝试匹配没有赋值的声明
+            Pattern simplePattern = Pattern.compile("^(?:\\s*\\(([^)]+)\\)\\s*)?([a-zA-Z_][a-zA-Z0-9_]*)$");
+            Matcher simpleMatcher = simplePattern.matcher(declaration);
+            if (simpleMatcher.matches()) {
+                String typeName = simpleMatcher.group(1);
+                String varName = simpleMatcher.group(2);
+
+                // 声明但未赋值
+                variables.put(varName, UNINITIALIZED);
+                if (typeName != null) {
+                    variableTypes.put(varName, normalizeTypeName(typeName));
+                }
+                debugPrint("@ Var declared: %s (type=%s) uninitialized", varName, typeName);
+                return;
+            }
             throw NotGrammarException.invalidStatementStructure("variable declaration", "Invalid declaration: " + declaration, lineNumber);
         }
 
-        String typeName = m.group(1); // may be null
+        String newTypeName = m.group(1); // 左侧目标类型
         String varName = m.group(2);
-        String expr = m.group(3); // may be null
+        String oldTypeName = m.group(3); // 右侧源类型
+        String expr = m.group(4); // 实际表达式
 
         if (expr == null) {
-            // 声明但未赋值
-            variables.put(varName, UNINITIALIZED);
-            if (typeName != null) {
-                variableTypes.put(varName, normalizeTypeName(typeName));
-            }
-            debugPrint("@ Var declared: %s (type=%s) uninitialized", varName, typeName);
-            return;
+            throw NotGrammarException.invalidStatementStructure("variable declaration", "Missing expression in: " + declaration, lineNumber);
         }
 
+        // 求值表达式
         Object value = evaluateExpression(expr, lineNumber);
         if (value == UNINITIALIZED) {
-            throw new NullTokenException(varName, "variable declaration");
+            throw new NullTokenException(expr, "variable declaration");
         }
 
-        if (typeName != null) {
-            String normType = normalizeTypeName(typeName);
-            // 静态类型要求严格匹配（不允许隐式转换）
-            if (!isExactTypeMatchToType(value, normType)) {
-                throw new NotGrammarException("Type mismatch: cannot assign value of type " +
-                        (value != null ? value.getClass().getSimpleName() : "null") +
-                        " to variable '" + varName + "' declared as " + normType);
-            }
-            variableTypes.put(varName, normType); // 标记为静态类型
+        // 如果右侧有类型声明，先进行类型转换
+        if (oldTypeName != null) {
+            String sourceType = normalizeTypeName(oldTypeName);
+            value = convertToType(value, sourceType);
+        }
+
+        // 如果左侧有类型声明，进行目标类型转换
+        if (newTypeName != null) {
+            String targetType = normalizeTypeName(newTypeName);
+            value = convertToType(value, targetType);
+            variableTypes.put(varName, targetType);
         }
 
         variables.put(varName, value);
-        debugPrint("@ Var declared: %s = %s (type=%s)", varName, value, typeName);
+        debugPrint("@ Var declared with type conversion: %s = %s (newType=%s, oldType=%s)",
+                varName, value, newTypeName, oldTypeName);
     }
+
 
     private void handleVarAssign(String assignment) throws Exception {
         handleVarAssign(assignment, -1);
@@ -536,151 +644,12 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
         debugPrint("@ Var assign: %s = %s", varName, value);
     }
 
-    /**
-     * 增加 change 语句处理： 支持多种形式：
-     *  - target::targetType = source::sourceType
-     *  - type::var = var    （type 在左侧的另一种书写）
-     *  - target = sourceType::source
-     *  - target = source
-     *
-     *  语义：
-     *   - 如果 targetType 可知（直接写出或从 sourceType 推断），则把 source 的值转换为 targetType 并赋值到 target，同时将 target 标记为该静态类型（覆盖旧类型）。
-     *   - 如果 target 没有类型而 source 也没有类型（change a = b），允许执行但打印非致命警告（尤其当 a == b 时），并将 a 设为自由类型（移除静态类型声明，如果存在）。
-     */
-    private void handleChangeStatement(String operand, int lineNumber) throws Exception {
-        String raw = operand.trim();
 
-        // 分割左右两部分
-        int eqIndex = raw.indexOf('=');
-        if (eqIndex == -1) {
-            throw NotGrammarException.invalidStatementStructure("change statement", "Missing '=' in " + raw, lineNumber);
-        }
-
-        String left = raw.substring(0, eqIndex).trim();
-        String right = raw.substring(eqIndex + 1).trim();
-
-        // 帮助函数：判断 token 是否是类型（支持多种别名）
-        java.util.function.Predicate<String> isTypeToken = (s) -> {
-            if (s == null) return false;
-            String n = s.trim().toLowerCase();
-            switch (n) {
-                case "int": case "integer": case "long":
-                case "double": case "float":
-                case "bool": case "boolean":
-                case "string": case "str":
-                case "null":
-                    return true;
-                default:
-                    return false;
-            }
-        };
-
-        String targetVar = null;
-        String targetType = null;
-        String sourceVar = null;
-        String sourceType = null;
-
-        // 解析左侧（可能含 ::）
-        if (left.contains("::")) {
-            String[] leftParts = left.split("::", 2);
-            String a = leftParts[0].trim();
-            String b = leftParts[1].trim();
-            if (isTypeToken.test(a)) {
-                // 写法 like "int::name" (type::var)
-                targetType = normalizeTypeName(a);
-                targetVar = b;
-            } else if (isTypeToken.test(b)) {
-                // 写法 like "name::int" (var::type)
-                targetVar = a;
-                targetType = normalizeTypeName(b);
-            } else {
-                throw NotGrammarException.invalidStatementStructure("change statement", "Unrecognized left side '" + left + "'", lineNumber);
-            }
-        } else {
-            targetVar = left;
-        }
-
-        // 解析右侧（可能含 ::）
-        if (right.contains("::")) {
-            String[] rightParts = right.split("::", 2);
-            String a = rightParts[0].trim();
-            String b = rightParts[1].trim();
-            if (isTypeToken.test(a)) {
-                // 写法 like "string::name" (type::var)
-                sourceType = normalizeTypeName(a);
-                sourceVar = b;
-            } else if (isTypeToken.test(b)) {
-                // 写法 like "name::string" (var::type)
-                sourceVar = a;
-                sourceType = normalizeTypeName(b);
-            } else {
-                throw NotGrammarException.invalidStatementStructure("change statement", "Unrecognized right side '" + right + "'", lineNumber);
-            }
-        } else {
-            sourceVar = right;
-        }
-
-        // 基本检查：变量名必须为合法标识符
-        if (targetVar == null || !targetVar.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
-            throw NotGrammarException.invalidStatementStructure("change statement", "Invalid target variable: " + left, lineNumber);
-        }
-        if (sourceVar == null || !sourceVar.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
-            throw NotGrammarException.invalidStatementStructure("change statement", "Invalid source variable: " + right, lineNumber);
-        }
-
-        // 检查 sourceVar 存在且已初始化
-        if (!variables.containsKey(sourceVar)) {
-            throw NonExistentObject.variableNotFound(sourceVar);
-        }
-        Object sourceVal = variables.get(sourceVar);
-        if (sourceVal == UNINITIALIZED) {
-            throw new NullTokenException(sourceVar, "change statement");
-        }
-
-        // 如果 sourceVar 有静态类型声明，而用户在 change 中指定了 sourceType，则二者必须一致
-        if (sourceType != null && variableTypes.containsKey(sourceVar)) {
-            String declaredSourceType = variableTypes.get(sourceVar);
-            if (!declaredSourceType.equals(sourceType)) {
-                throw new NotGrammarException("Source variable '" + sourceVar + "' declared as " + declaredSourceType +
-                        " but change specified source type " + sourceType);
-            }
-        }
-
-        // 决定最终的目标类型：优先使用显式 targetType，其次使用 sourceType（如果 target 未指定）
-        String finalTargetType = targetType != null ? targetType : sourceType;
-
-        Object converted;
-        if (finalTargetType != null) {
-            // 需要转换
-            converted = convertToType(sourceVal, finalTargetType);
-            // 将 targetVar 标记为该静态类型（覆盖旧类型）
-            variableTypes.put(targetVar, finalTargetType);
-        } else {
-            // 没有任何类型信息：直接赋值，但这通常是无意义的（尤其 a = a）
-            if (targetVar.equals(sourceVar)) {
-                System.err.println("[Warning] change statement '" + raw + "' has no type change and is a no-op");
-            } else {
-                // 当没有类型时，把目标设为自由类型（移除静态声明，如果存在）
-                if (variableTypes.containsKey(targetVar)) {
-                    System.err.println("[Warning] change statement '" + raw + "' will remove static type of '" + targetVar + "'");
-                    variableTypes.remove(targetVar);
-                }
-            }
-            converted = sourceVal;
-        }
-
-        // 存储到 targetVar（允许与 sourceVar 相同）
-        variables.put(targetVar, converted);
-
-        debugPrint("@ Change: %s set to %s (effective type=%s) from %s%s",
-                targetVar, converted, finalTargetType == null ? "free" : finalTargetType, sourceVar,
-                sourceType == null ? "" : ("::" + sourceType));
-    }
 
     /**
      * 将对象转换为指定的目标类型（严格转换：若不可转换则抛出 NotGrammarException）
      * 统一所有转换逻辑入口，避免不同路径产生不一致行为。
-     *
+     * <p>
      * 新增/修改：
      *  - string -> int : 返回字符串首字符的 Unicode code point（对于空串返回 0）
      *  - 支持 float/double 同一处理
@@ -1041,7 +1010,15 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
     }
 
     private enum OpCode {
-        IMPORT, VAR_DECL, VAR_ASSIGN, LOOP_START, END_BLOCK, CALL, GIVE, DO, CHANGE
+        IMPORT,
+        VAR_DECL,
+        VAR_ASSIGN,
+        LOOP_START,
+        END_BLOCK,
+        CALL,
+        GIVE,
+        DO,
+        SWAP
     }
 
     // 块类型枚举
@@ -1057,6 +1034,17 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
         BlockContext(BlockType type, int indent) {
             this.type = type;
             this.indent = indent;
+        }
+    }
+
+    // Swap语句数据结构
+    private static class SwapInstructionData {
+        String varA;
+        String varB;
+
+        SwapInstructionData(String varA, String varB) {
+            this.varA = varA;
+            this.varB = varB;
         }
     }
 
@@ -1110,9 +1098,9 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
 
     /**
      * 表达式求值入口（带行号）
-     * 增强的表达式求值，支持自定义关键字
+     * 修复：未引用的字符串应该报错
      */
-    Object evaluateExpression(String expr, int lineNumber) throws Exception{
+    Object evaluateExpression(String expr, int lineNumber) throws Exception {
         expr = (expr == null ? "" : expr.trim());
 
         // 检查是否是自定义关键字
@@ -1170,8 +1158,8 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
             return val;
         }
 
-        // 如果都不是，返回原始字符串（可能是未引用的字符串）
-        return expr;
+        // 修复：未引用的字符串应该报错，而不是当作字符串处理
+        throw new NotGrammarException("Unquoted string literal: " + expr + ". Use double quotes for strings.");
     }
 
     private boolean isCustomKeyword(String expr) {
@@ -1315,7 +1303,7 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
     }
 
     private boolean containsOperators(String expr) {
-        String[] operators = {"+", "-", "*", "/", "%", ">", "<", "==", "!=", ">=", "<=", "&&", "||", "++"};
+        String[] operators = {"+", "-", "*", "/", "%", ">", "<", "==", "!=", ">=", "<=", "&&", "||", "++", "**", "//"};
 
         boolean inString = false;
         boolean inEscape = false;
@@ -1429,7 +1417,7 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
     }
 
     /**
-     * 增强的令牌化方法 - 识别 var 关键字
+     * 增强的令牌化方法 - 识别 var 关键字、支持 ** 和 // 运算符
      */
     private List<Object> tokenizeExpression(String expr, int lineNumber) throws Exception {
         List<Object> tokens = new ArrayList<>();
@@ -1488,7 +1476,8 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
                     String twoCharOp = String.valueOf(c) + next;
                     if (twoCharOp.equals("++") || twoCharOp.equals("--") || twoCharOp.equals("==") ||
                             twoCharOp.equals("!=") || twoCharOp.equals(">=") || twoCharOp.equals("<=") ||
-                            twoCharOp.equals("&&") || twoCharOp.equals("||")) {
+                            twoCharOp.equals("&&") || twoCharOp.equals("||") || twoCharOp.equals("**") ||
+                            twoCharOp.equals("//")) {
                         tokens.add(twoCharOp);
                         i++; // 跳过下一个字符
                         continue;
@@ -1564,7 +1553,24 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
         if (tokens.isEmpty()) return null;
         if (tokens.size() == 1) return ensureEvaluated(tokens.get(0), lineNumber);
 
-        // 先处理数字拼接 (++)
+        // 先处理幂运算符 (**) - 最高优先级
+        for (int i = 0; i < tokens.size() - 1; i++) {
+            if ("**".equals(tokens.get(i))) {
+                Object left = (i > 0) ? ensureEvaluated(tokens.get(i - 1), lineNumber) : null;
+                Object right = (i < tokens.size() - 1) ? ensureEvaluated(tokens.get(i + 1), lineNumber) : null;
+                Object result = calculatePower(left, right, lineNumber);
+
+                // 替换这三个令牌为结果
+                List<Object> newTokens = new ArrayList<>();
+                if (i > 0) newTokens.addAll(tokens.subList(0, i - 1));
+                newTokens.add(result);
+                if (i < tokens.size() - 2) newTokens.addAll(tokens.subList(i + 2, tokens.size()));
+
+                return evaluateTokens(newTokens, lineNumber);
+            }
+        }
+
+        // 再处理数字拼接 (++)
         for (int i = 0; i < tokens.size() - 1; i++) {
             if ("++".equals(tokens.get(i))) {
                 Object left = (i > 0) ? ensureEvaluated(tokens.get(i - 1), lineNumber) : null;
@@ -1581,12 +1587,12 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
             }
         }
 
-        // 处理乘除模运算符
+        // 处理乘除模运算符（包括 //）
         for (int i = 1; i < tokens.size() - 1; i++) {
             Object token = tokens.get(i);
             if (token instanceof String) {
                 String op = (String) token;
-                if ("*".equals(op) || "/".equals(op) || "%".equals(op)) {
+                if ("*".equals(op) || "/".equals(op) || "%".equals(op) || "//".equals(op)) {
                     Object left = ensureEvaluated(tokens.get(i - 1), lineNumber);
                     Object right = ensureEvaluated(tokens.get(i + 1), lineNumber);
                     Object result = calculateValues(left, right, op, lineNumber);
@@ -1688,6 +1694,31 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
     }
 
     /**
+     * 计算幂运算 a ** b
+     */
+    private Object calculatePower(Object left, Object right, int lineNumber) {
+        if (left == null || right == null) {
+            throw new NotGrammarException("Power operation requires both operands");
+        }
+
+        // 转换为数字
+        double base = toDouble(left);
+        double exponent = toDouble(right);
+
+        try {
+            double result = Math.pow(base, exponent);
+
+            // 如果两个操作数都是整数且指数是非负整数，返回整数
+            if (left instanceof Integer && right instanceof Integer && exponent >= 0) {
+                return (int) result;
+            }
+            return result;
+        } catch (Exception e) {
+            throw new MathError("Power calculation error: " + e.getMessage());
+        }
+    }
+
+    /**
      * 确保对象已经被求值（带行号）
      */
     private Object ensureEvaluated(Object obj, int lineNumber) throws Exception {
@@ -1764,6 +1795,7 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
 
     private Object calculateValues(Object left, Object right, String op, int lineNumber) {
         try {
+
             // 处理加法运算符 +
             if ("+".equals(op)) {
                 // 布尔值相加报错
@@ -1816,15 +1848,49 @@ public class VolcanoRuntime {//Volcano的核心，也是最复杂的一个类
                         (left != null ? left.getClass().getSimpleName() : "null") + " and " + (right != null ? right.getClass().getSimpleName() : "null"));
             }
 
-            // 对 / 或 % 操作，如果任一操作数是字符串或StringRepeat，抛出 MathError（不能对字符串做除法或取模）
-            if ("/".equals(op) || "%".equals(op)) {
+            // 处理浮点除法 (/)
+            if ("/".equals(op)) {
+                // 对 / 操作，如果任一操作数是字符串或StringRepeat，抛出 MathError
                 if (left instanceof String || right instanceof String || left instanceof StringRepeat || right instanceof StringRepeat) {
-                    throw new MathError("Cannot perform '" + op + "' on non-numeric operand(s)");
+                    throw new MathError("Cannot perform '/' on non-numeric operand(s)");
                 }
+
+                double l = toDouble(left);
                 double r = toDouble(right);
                 if (r == 0) {
                     throw MathError.divisionByZero();
                 }
+                return l / r; // 浮点除法
+            }
+
+            // 处理整数除法 (//)
+            if ("//".equals(op)) {
+                // 对 // 操作，如果任一操作数是字符串或StringRepeat，抛出 MathError
+                if (left instanceof String || right instanceof String || left instanceof StringRepeat || right instanceof StringRepeat) {
+                    throw new MathError("Cannot perform '//' on non-numeric operand(s)");
+                }
+
+                int l = toInt(left);
+                int r = toInt(right);
+                if (r == 0) {
+                    throw MathError.divisionByZero();
+                }
+                return l / r; // 整数除法
+            }
+
+            // 处理取模 (%)
+            if ("%".equals(op)) {
+                // 对 % 操作，如果任一操作数是字符串或StringRepeat，抛出 MathError
+                if (left instanceof String || right instanceof String || left instanceof StringRepeat || right instanceof StringRepeat) {
+                    throw new MathError("Cannot perform '%' on non-numeric operand(s)");
+                }
+
+                double l = toDouble(left);
+                double r = toDouble(right);
+                if (r == 0) {
+                    throw MathError.divisionByZero();
+                }
+                return l % r;
             }
 
             // 处理乘法运算符 - 包含字符串重复支持

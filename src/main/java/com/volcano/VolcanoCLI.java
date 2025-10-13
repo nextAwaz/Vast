@@ -7,7 +7,7 @@ import java.util.*;
 import com.volcano.vm.VolcanoVM;
 
 public class VolcanoCLI {
-    static String ver = "0.0.9";//版本信息
+    static String ver = "0.0.10";//版本信息
     public static void main(String[] args) {
         if (args.length == 0) {
             printUsage();
@@ -103,16 +103,10 @@ public class VolcanoCLI {
         }
 
         try {
-            // 自动为 CLI eval 添加所有内置库的导入，避免手工写 imp
-            StringBuilder finalCode = new StringBuilder();
-            // VolcanoVM 在同一包中，可直接访问其静态 BUILTIN_CLASSES
-            for (String cls : VolcanoVM.getBuiltinClasses().keySet()) {
-                finalCode.append("imp ").append(cls).append("\n");
-            }
-            finalCode.append(code.toString());
-
-            println("@ Evaluating: " + finalCode);
-            Volcano.execute(finalCode.toString());
+            // 不再需要自动导入内置库，因为 VM 已经默认导入了
+            // 只需要处理非内置库的导入
+            println("@ Evaluating: " + code);
+            Volcano.execute(code.toString());
         } catch (Volcano.VolcanoException e) {
             System.err.println("@ Evaluation failed: " + e.getMessage());
         }
@@ -194,15 +188,18 @@ public class VolcanoCLI {
         println("  time()                 - Get current time in ms");
         println("  exit(code)             - Exit with code");
         println("  input(prompt)          - Read input with prompt");
+        println();
 
         println("Time:");
         println("  currentMillis()        - Get current time in ms");
         println("  formatDate(date, fmt)  - Format date");
+        println();
 
         println("Array:");
         println("  create(size)           - Create array");
         println("  get(array, index)      - Get element");
         println("  set(array, index, val) - Set element");
+        println();
 
         println("Ops:");
         println("  and(a, b)              - Logical AND");
@@ -212,6 +209,24 @@ public class VolcanoCLI {
         println("  repeat(str, n)         - Repeat string");
         println("  equals(a, b)           - Equality check");
         println("  notEquals(a, b)        - Inequality check");
+        println();
+
+        println("Swap statement:");// 交换语句，可以交换两个变量的值，这样就不需要临时变量了
+        println("  swap(varA)(varB)              - Swap values of two variables");
+        println();
+
+        println("Enhanced operators:");
+        println("  a ** b                        - Power (a to the b)");
+        println("  a // b                        - Integer division (like Java /)");
+        println("  a / b                         - Float division (like Python /)");
+        println("  a % b                         - Modulo (remainder)");
+        println();
+
+        println("Enhanced var syntax:");
+        println("  var (type) name = value          - Declare with type");
+        println("  var name = (type) value          - Convert value to type");
+        println("  var (newType) name = (oldType) value - Type conversion");
+        println();
 
         println("DataType:");
         println("  strLength(str)         - String length");
@@ -238,6 +253,7 @@ public class VolcanoCLI {
         println("  boolOr(a, b)           - Logical OR");
         println("  boolNot(a)             - Logical NOT");
         println("  boolXor(a, b)          - Logical XOR");
+        println();
 
         println("  Type Conversion:");
         println("    typeOf(obj)          - Get type name");
@@ -245,6 +261,7 @@ public class VolcanoCLI {
         println("    toInt(obj)           - Convert to integer");
         println("    toDouble(obj)        - Convert to double");
         println("    toBoolean(obj)       - Convert to boolean");
+        println();
 
         println("  Array Operations:");
         println("    arrLength(array)     - Get array length");
@@ -253,6 +270,7 @@ public class VolcanoCLI {
         println("    arrGet(array, index) - Get array element");
         println("    arrSet(array, index, value) - Set array element");
         println("    arrSlice(array, start, end) - Get array slice");
+        println();
     }
 
     private static void handleInfoCommand(String[] args) {

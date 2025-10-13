@@ -44,6 +44,22 @@ public class DataType {
         }
     }
 
+    // 幂运算方法
+    public static double numPower(double base, double exponent) {
+        return Math.pow(base, exponent);
+    }
+
+    public static int numIntPower(int base, int exponent) {
+        if (exponent < 0) {
+            throw new IllegalArgumentException("Exponent must be non-negative for integer power");
+        }
+        int result = 1;
+        for (int i = 0; i < exponent; i++) {
+            result *= base;
+        }
+        return result;
+    }
+
     public static double numParseDouble(String str) {
         try {
             return Double.parseDouble(str);
