@@ -189,6 +189,35 @@ public class Parser {
     private Statement parseExpressionOrAssignment() {
         Expression expr = parseExpression();
 
+        // 检查是否是方法调用
+        if (expr instanceof VariableExpression && match("DOT")) {
+            // 处理类名.方法名 的情况
+            if (match("IDENTIFIER")) {
+                String methodName = previous().getLexeme();
+
+                // 检查是否有参数列表
+                if (match("LEFT_PAREN")) {
+                    List<Expression> arguments = parseExpressionList();
+                    consume("RIGHT_PAREN", "Expect ')' after arguments");
+
+                    // 创建方法调用表达式
+                    return new ExpressionStatement(
+                            new MethodCallExpression(
+                                    (VariableExpression) expr,
+                                    methodName,
+                                    arguments,
+                                    expr.getLineNumber(),
+                                    expr.getColumnNumber()
+                            ),
+                            expr.getLineNumber(),
+                            expr.getColumnNumber()
+                    );
+                } else {
+                    throw error(peek(), "Expect '(' after method name");
+                }
+            }
+        }
+
         // 检查是否是赋值语句
         if (expr instanceof VariableExpression && match("EQUAL")) {
             Expression value = parseExpression();
@@ -373,8 +402,29 @@ public class Parser {
             return new LiteralExpression(value, previous().getLine(), previous().getColumn());
         }
         if (match("IDENTIFIER")) {
-            return new VariableExpression(previous().getLexeme(),
-                    previous().getLine(), previous().getColumn());
+            Token identifier = previous();
+            Expression expr = new VariableExpression(identifier.getLexeme(),
+                    identifier.getLine(), identifier.getColumn());
+
+            // 处理成员访问链
+            while (match("DOT")) {
+                if (!match("IDENTIFIER")) {
+                    throw error(peek(), "Expect property name after '.'");
+                }
+                Token property = previous();
+                expr = new MemberAccessExpression(expr, property.getLexeme(),
+                        identifier.getLine(), identifier.getColumn());
+            }
+
+            // 处理函数调用
+            if (match("LEFT_PAREN")) {
+                List<Expression> arguments = parseExpressionList();
+                consume("RIGHT_PAREN", "Expect ')' after arguments");
+                expr = new FunctionCallExpression(expr, arguments,
+                        identifier.getLine(), identifier.getColumn());
+            }
+
+            return expr;
         }
         if (match("LEFT_PAREN")) {
             Expression expr = parseExpression();

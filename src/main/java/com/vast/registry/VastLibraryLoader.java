@@ -32,11 +32,16 @@ public class VastLibraryLoader {
             // 解析导入路径（支持注释）
             String cleanPath = importPath.split("//")[0].trim();
 
+            // 跳过 VM 自身的类
+            if (cleanPath.startsWith("com.vast.") || cleanPath.equals("VastVM")) {
+                return false; // 让后续的类加载器处理
+            }
+
             // 查找库文件
             File libraryFile = findLibraryFile(cleanPath);
             if (libraryFile == null) {
-                System.err.printf("[Error] Library not found: %s%n", cleanPath);
-                return false;
+                System.err.printf("[Info] Library not found, trying as Java class: %s%n", cleanPath);
+                return false; // 让后续的类加载器处理
             }
 
             return loadLibraryFromFile(libraryFile, vm);
@@ -57,7 +62,9 @@ public class VastLibraryLoader {
 
         // 1. 首先在当前目录查找
         File currentDirLib = new File(path + ".jar");
-        if (currentDirLib.exists()) return currentDirLib;
+        if (currentDirLib.exists() && !isVastVMJar(currentDirLib)) {
+            return currentDirLib;
+        }
 
         currentDirLib = new File(path + ".zip");
         if (currentDirLib.exists()) return currentDirLib;
@@ -142,6 +149,8 @@ public class VastLibraryLoader {
         }
     }
 
+
+
     /**
      * 查找库元数据
      */
@@ -182,6 +191,12 @@ public class VastLibraryLoader {
             }
         }
         return config;
+    }
+
+    private boolean isVastVMJar(File jarFile) {
+        // 检查是否是 Vast VM 自身的 JAR 文件
+        String jarName = jarFile.getName().toLowerCase();
+        return jarName.contains("vast") && jarName.contains("vm");
     }
 
     /**

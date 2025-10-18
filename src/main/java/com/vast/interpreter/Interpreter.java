@@ -66,6 +66,26 @@ public class Interpreter implements ASTVisitor<Void> {
         return null;
     }
 
+    @Override
+    public Void visitMemberAccessExpression(MemberAccessExpression expr) {
+        return null;
+    }
+
+    @Override
+    public Void visitFunctionCallExpression(FunctionCallExpression expr) {
+        return null;
+    }
+
+    @Override
+    public Void visitMethodCallExpression(MethodCallExpression expr) {
+        Object result = evaluate(expr);
+        this.lastResult = result;
+        if (result != null) {
+            System.out.println("@ Method call result: " + result);
+        }
+        return null;
+    }
+
     // 语句访问方法
     @Override
     public Void visitVariableDeclaration(VariableDeclaration stmt) {
@@ -107,6 +127,7 @@ public class Interpreter implements ASTVisitor<Void> {
         try {
             // 首先尝试作为外置库导入
             VastLibraryLoader loader = VastLibraryLoader.getInstance();
+            // 注意：这里需要修改 VastLibraryLoader 中的方法为 public
             if (loader.loadLibraryFromImport(importPath, this.vm)) {
                 System.out.printf("@ External library loaded: %s%n", importPath);
                 return null;
@@ -327,6 +348,65 @@ public class Interpreter implements ASTVisitor<Void> {
         }
 
         @Override
+        public Object visitMemberAccessExpression(MemberAccessExpression expr) {
+            Object left = evaluate(expr.getObject());
+            String memberName = expr.getMemberName();
+
+            // 如果是变量访问类静态成员（如 Sys.print）
+            if (left instanceof String) {
+                String className = (String) left;
+                // 返回一个包装对象，包含类名和成员名
+                return new StaticMethodReference(className, memberName);
+            }
+
+            // 其他情况处理...
+            throw new VastExceptions.NotGrammarException(
+                    "Unsupported member access: " + expr,
+                    expr.getLineNumber(),
+                    expr.getColumnNumber()
+            );
+        }
+
+        @Override
+        public Object visitFunctionCallExpression(FunctionCallExpression expr) {
+            Object callee = evaluate(expr.getCallee());
+
+            // 计算所有参数
+            Object[] args = new Object[expr.getArguments().size()];
+            for (int i = 0; i < expr.getArguments().size(); i++) {
+                args[i] = evaluate(expr.getArguments().get(i));
+            }
+
+            // 处理静态方法调用（如 Sys.print）
+            if (callee instanceof StaticMethodReference) {
+                StaticMethodReference methodRef = (StaticMethodReference) callee;
+                return callInternalMethod(methodRef.getClassName(), methodRef.getMethodName(), args);
+            }
+
+            // 其他类型的函数调用...
+            throw new VastExceptions.NotGrammarException(
+                    "Unsupported function call: " + expr,
+                    expr.getLineNumber(),
+                    expr.getColumnNumber()
+            );
+        }
+
+        @Override
+        public Object visitMethodCallExpression(MethodCallExpression expr) {
+            String className = expr.getClassName().getName();
+            String methodName = expr.getMethodName();
+
+            // 计算所有参数
+            Object[] args = new Object[expr.getArguments().size()];
+            for (int i = 0; i < expr.getArguments().size(); i++) {
+                args[i] = evaluate(expr.getArguments().get(i));
+            }
+
+            // 调用内部方法
+            return Interpreter.this.callInternalMethod(className, methodName, args);
+        }
+
+        @Override
         public Object visitBinaryExpression(BinaryExpression expr) {
             Object left = evaluate(expr.getLeft());
             Object right = evaluate(expr.getRight());
@@ -434,9 +514,7 @@ public class Interpreter implements ASTVisitor<Void> {
         @Override
         public Object visitSwapStatement(SwapStatement stmt) { return null; }
 
-        /**
-         * 幂运算
-         */
+        // 其他辅助方法保持不变...
         private Object performPower(Object left, Object right) {
             checkNumberOperands(left, right);
             double base = toDouble(left);
@@ -449,9 +527,6 @@ public class Interpreter implements ASTVisitor<Void> {
             return result;
         }
 
-        /**
-         * 整数除法
-         */
         private Object performIntegerDivision(Object left, Object right) {
             checkNumberOperands(left, right);
             if (toDouble(right) == 0) {
@@ -460,9 +535,6 @@ public class Interpreter implements ASTVisitor<Void> {
             return toInt(left) / toInt(right);
         }
 
-        /**
-         * 数字拼接
-         */
         private Object performNumberConcatenation(Object left, Object right) {
             if (right == null || (right instanceof String && ((String) right).isEmpty())) {
                 if (left instanceof Integer) {
@@ -507,9 +579,6 @@ public class Interpreter implements ASTVisitor<Void> {
             }
         }
 
-        /**
-         * 取模运算
-         */
         private Object performModulo(Object left, Object right) {
             checkNumberOperands(left, right);
             if (toDouble(right) == 0) {
@@ -521,9 +590,6 @@ public class Interpreter implements ASTVisitor<Void> {
             return toInt(left) % toInt(right);
         }
 
-        /**
-         * 字符串重复
-         */
         private Object performStringMultiplication(Object left, Object right) {
             if (left instanceof String && right instanceof Number) {
                 String str = (String) left;
@@ -644,12 +710,24 @@ public class Interpreter implements ASTVisitor<Void> {
             if (obj instanceof String) return !((String) obj).isEmpty();
             return obj != null;
         }
+    }
 
-        // 获取当前VM的方法
-        private VastVM getCurrentVM() {
-            // 这里需要根据你的架构来获取当前的VM实例
-            // 暂时返回null，实际实现时需要修改
-            return null;
+    // 静态方法引用辅助类
+    private static class StaticMethodReference {
+        private final String className;
+        private final String methodName;
+
+        public StaticMethodReference(String className, String methodName) {
+            this.className = className;
+            this.methodName = methodName;
+        }
+
+        public String getClassName() { return className; }
+        public String getMethodName() { return methodName; }
+
+        @Override
+        public String toString() {
+            return className + "." + methodName;
         }
     }
 }

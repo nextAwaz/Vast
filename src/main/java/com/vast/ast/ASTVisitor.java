@@ -14,6 +14,9 @@ public interface ASTVisitor<T> {
     T visitBinaryExpression(BinaryExpression expr);
     T visitUnaryExpression(UnaryExpression expr);
     T visitAssignmentExpression(AssignmentExpression expr);
+    T visitMemberAccessExpression(MemberAccessExpression expr);
+    T visitFunctionCallExpression(FunctionCallExpression expr);
+    T visitMethodCallExpression(MethodCallExpression expr);
 
     // 语句访问方法
     T visitVariableDeclaration(VariableDeclaration stmt);
