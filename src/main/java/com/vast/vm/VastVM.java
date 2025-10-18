@@ -2,6 +2,7 @@ package com.vast.vm;
 
 import com.vast.ast.Program;
 import com.vast.internal.Input;
+import com.vast.internal.exception.VastExceptions;
 import com.vast.parser.Lexer;
 import com.vast.parser.Parser;
 import com.vast.parser.Token;
@@ -80,30 +81,48 @@ public class VastVM {//Vast 虚拟机核心类
             System.out.println("@ End source code");
         }
 
-        // 词法分析
-        Lexer lexer = new Lexer(source);
-        List<Token> tokens = lexer.scanTokens();
+        try {
+            // 词法分析
+            Lexer lexer = new Lexer(source);
+            List<Token> tokens = lexer.scanTokens();
 
-        if (debugMode) {
-            System.out.println("@ Tokens:");
-            tokens.forEach(System.out::println);
+            if (debugMode) {
+                System.out.println("@ Tokens:");
+                tokens.forEach(System.out::println);
+            }
+
+            // 语法分析
+            Parser parser = new Parser(tokens);
+            Program program = parser.parseProgram();
+
+            if (debugMode) {
+                System.out.println("@ AST:");
+                System.out.println(program);
+            }
+
+            // 使用解释器执行
+            Interpreter interpreter = new Interpreter();
+            interpreter.interpret(program);
+
+            return getLastResult();
+
+        } catch (VastExceptions.VastRuntimeException e) {
+            // 处理Vast特定异常
+            System.err.println(e.getUserFriendlyMessage());
+            if (debugMode) {
+                e.printStackTrace();
+            }
+            throw e;
+        } catch (Exception e) {
+            // 将其他异常包装为Vast异常
+            VastExceptions.UnknownVastException vastException =
+                    new VastExceptions.UnknownVastException("Unexpected error during execution", e);
+            System.err.println(vastException.getUserFriendlyMessage());
+            if (debugMode) {
+                e.printStackTrace();
+            }
+            throw vastException;
         }
-
-        // 语法分析
-        Parser parser = new Parser(tokens);
-        Program program = parser.parseProgram();
-
-        if (debugMode) {
-            System.out.println("@ AST:");
-            System.out.println(program);
-        }
-
-        // 使用新的运行时执行
-        VastRuntime runtime = new VastRuntime(this, importedClasses, localVariables);
-        runtime.setDebugMode(debugMode);
-        runtime.execute(program);
-
-        return getLastResult();
     }
 
     /**

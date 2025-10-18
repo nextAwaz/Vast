@@ -1,5 +1,6 @@
 package com.vast;
 
+import com.vast.internal.exception.VastExceptions;
 import com.vast.vm.VastVM;
 
 import java.io.File;
@@ -9,7 +10,7 @@ import java.util.List;
 
 public class Vast {// Vast 脚本执行入口
 
-    public static class VastException extends RuntimeException {
+    public static class VastException extends VastExceptions.VastRuntimeException {
         public VastException(String message) {
             super(message);
         }
@@ -18,7 +19,6 @@ public class Vast {// Vast 脚本执行入口
             super(message, cause);
         }
     }
-
     public static class Builder {
         private boolean debug = false;
 

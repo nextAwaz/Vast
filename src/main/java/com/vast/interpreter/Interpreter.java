@@ -4,10 +4,13 @@ import com.vast.ast.*;
 import com.vast.ast.expressions.*;
 import com.vast.ast.statements.*;
 import com.vast.vm.VastVM;
+import com.vast.internal.exception.VastExceptions;
 
 import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
 
 // 解释器类，负责执行AST节点
 public class Interpreter implements ASTVisitor<Void> {
@@ -22,39 +25,34 @@ public class Interpreter implements ASTVisitor<Void> {
     public void interpret(Program program) {
         try {
             program.accept(this);
-        } catch (RuntimeError error) {
-            System.err.println("Runtime error: " + error.getMessage());
+        } catch (VastExceptions.VastRuntimeException error) {
+            System.err.println("Runtime error: " + error.getUserFriendlyMessage());
         }
     }
 
     // 表达式访问方法
     @Override
     public Void visitLiteralExpression(LiteralExpression expr) {
-        // 字面量表达式在 evaluate 中直接返回值，这里不需要处理
         return null;
     }
 
     @Override
     public Void visitVariableExpression(VariableExpression expr) {
-        // 变量表达式在 evaluate 中处理，这里不需要处理
         return null;
     }
 
     @Override
     public Void visitBinaryExpression(BinaryExpression expr) {
-        // 二元表达式在 evaluate 中处理，这里不需要处理
         return null;
     }
 
     @Override
     public Void visitUnaryExpression(UnaryExpression expr) {
-        // 一元表达式在 evaluate 中处理，这里不需要处理
         return null;
     }
 
     @Override
     public Void visitAssignmentExpression(AssignmentExpression expr) {
-        // 赋值表达式在 evaluate 中处理，这里不需要处理
         return null;
     }
 
@@ -67,7 +65,7 @@ public class Interpreter implements ASTVisitor<Void> {
         }
 
         variables.put(stmt.getVariableName(), value);
-        this.lastResult = value; // 设置最后结果
+        this.lastResult = value;
         System.out.println("@ Var declared: " + stmt.getVariableName() + " = " + value);
         return null;
     }
@@ -76,7 +74,7 @@ public class Interpreter implements ASTVisitor<Void> {
     public Void visitAssignmentStatement(AssignmentStatement stmt) {
         Object value = evaluate(stmt.getValue());
         variables.put(stmt.getVariableName(), value);
-        this.lastResult = value; // 设置最后结果
+        this.lastResult = value;
         System.out.println("@ Var assigned: " + stmt.getVariableName() + " = " + value);
         return null;
     }
@@ -84,7 +82,7 @@ public class Interpreter implements ASTVisitor<Void> {
     @Override
     public Void visitExpressionStatement(ExpressionStatement stmt) {
         Object result = evaluate(stmt.getExpression());
-        this.lastResult = result; // 设置最后结果
+        this.lastResult = result;
         if (result != null) {
             System.out.println("@ Expression result: " + result);
         }
@@ -94,12 +92,11 @@ public class Interpreter implements ASTVisitor<Void> {
     @Override
     public Void visitImportStatement(ImportStatement stmt) {
         System.out.println("@ Import: " + stmt.getClassName());
-        // TODO: 实现导入逻辑
         try {
             Class<?> clazz = Class.forName(stmt.getClassName());
             importedClasses.put(stmt.getClassName(), clazz);
         } catch (ClassNotFoundException e) {
-            System.err.println("Warning: Class not found: " + stmt.getClassName());
+            throw VastExceptions.NonExistentExternalLibraryException.forLibrary(stmt.getClassName(), e);
         }
         return null;
     }
@@ -109,7 +106,6 @@ public class Interpreter implements ASTVisitor<Void> {
         System.out.println("@ Loop: " + stmt.getCondition());
         Object condition = evaluate(stmt.getCondition());
         if (condition instanceof Boolean && (Boolean) condition) {
-            // 执行循环体
             for (Statement bodyStmt : stmt.getBody()) {
                 bodyStmt.accept(this);
             }
@@ -122,13 +118,14 @@ public class Interpreter implements ASTVisitor<Void> {
         String className = stmt.getTarget().getName();
         System.out.println("@ Give: " + className + " with " + stmt.getVariables().size() + " variables");
 
-        // 收集变量值
         for (Expression varExpr : stmt.getVariables()) {
             if (varExpr instanceof VariableExpression) {
                 String varName = ((VariableExpression) varExpr).getName();
                 if (variables.containsKey(varName)) {
                     Object value = variables.get(varName);
                     System.out.println("  Variable " + varName + ": " + value);
+                } else {
+                    throw VastExceptions.NonExistentObject.variableNotFound(varName);
                 }
             }
         }
@@ -142,14 +139,12 @@ public class Interpreter implements ASTVisitor<Void> {
 
         System.out.println("@ Do: " + className + "." + methodName + "() with " + stmt.getArguments().size() + " arguments");
 
-        // 计算参数值
         Object[] args = new Object[stmt.getArguments().size()];
         for (int i = 0; i < stmt.getArguments().size(); i++) {
             args[i] = evaluate(stmt.getArguments().get(i));
             System.out.println("  Arg " + i + ": " + args[i]);
         }
 
-        // 调用方法
         Object result = callInternalMethod(className, methodName, args);
         this.lastResult = result;
 
@@ -168,16 +163,15 @@ public class Interpreter implements ASTVisitor<Void> {
         System.out.println("@ Swap: " + varA + " <-> " + varB);
 
         if (!variables.containsKey(varA)) {
-            throw new RuntimeError("Undefined variable '" + varA + "'");
+            throw VastExceptions.NonExistentObject.variableNotFound(varA);
         }
         if (!variables.containsKey(varB)) {
-            throw new RuntimeError("Undefined variable '" + varB + "'");
+            throw VastExceptions.NonExistentObject.variableNotFound(varB);
         }
 
         Object valueA = variables.get(varA);
         Object valueB = variables.get(varB);
 
-        // 执行交换
         variables.put(varA, valueB);
         variables.put(varB, valueA);
 
@@ -190,23 +184,22 @@ public class Interpreter implements ASTVisitor<Void> {
      */
     private Object callInternalMethod(String className, String methodName, Object[] args) {
         try {
-            // 查找类
             Class<?> clazz = findClass(className);
             if (clazz == null) {
-                throw new RuntimeError("Class not found: " + className);
+                throw VastExceptions.NonExistentObject.classNotFound(className);
             }
 
-            // 查找方法
             Method method = findBestMethod(clazz, methodName, args);
             if (method == null) {
-                throw new RuntimeError("Method not found: " + methodName + " in class " + className);
+                throw VastExceptions.NonExistentObject.methodNotFound(className, methodName);
             }
 
-            // 调用静态方法
             return method.invoke(null, args);
 
+        } catch (VastExceptions.VastRuntimeException e) {
+            throw e;
         } catch (Exception e) {
-            throw new RuntimeError("Failed to call method " + className + "." + methodName + ": " + e.getMessage());
+            throw new VastExceptions.UnknownVastException("Failed to call method " + className + "." + methodName, e);
         }
     }
 
@@ -214,18 +207,15 @@ public class Interpreter implements ASTVisitor<Void> {
      * 查找类
      */
     private Class<?> findClass(String className) {
-        // 首先检查VastVM的注册类
         Map<String, Class<?>> builtinClasses = VastVM.getBuiltinClasses();
         if (builtinClasses.containsKey(className)) {
             return builtinClasses.get(className);
         }
 
-        // 检查运行时导入的类
         if (importedClasses.containsKey(className)) {
             return importedClasses.get(className);
         }
 
-        // 尝试动态加载
         try {
             return Class.forName(className);
         } catch (ClassNotFoundException e) {
@@ -300,7 +290,7 @@ public class Interpreter implements ASTVisitor<Void> {
         @Override
         public Object visitVariableExpression(VariableExpression expr) {
             if (!variables.containsKey(expr.getName())) {
-                throw new RuntimeError("Undefined variable '" + expr.getName() + "'");
+                throw VastExceptions.NonExistentObject.variableNotFound(expr.getName());
             }
             return variables.get(expr.getName());
         }
@@ -344,7 +334,11 @@ public class Interpreter implements ASTVisitor<Void> {
                 case "||":
                     return toBoolean(left) || toBoolean(right);
                 default:
-                    throw new RuntimeError("Unknown operator: " + expr.getOperator());
+                    throw new VastExceptions.NotGrammarException(
+                            "Unknown operator: " + expr.getOperator(),
+                            expr.getLineNumber(),
+                            expr.getColumnNumber()
+                    );
             }
         }
 
@@ -356,17 +350,31 @@ public class Interpreter implements ASTVisitor<Void> {
                 case "-":
                     if (right instanceof Integer) return -(Integer) right;
                     if (right instanceof Double) return -(Double) right;
-                    throw new RuntimeError("Unary - requires numeric operand");
+                    throw new VastExceptions.MathError(
+                            "Unary - requires numeric operand",
+                            "Operand type: " + (right != null ? right.getClass().getSimpleName() : "null")
+                    );
                 case "!":
                     if (right instanceof Boolean) return !(Boolean) right;
-                    throw new RuntimeError("Unary ! requires boolean operand");
+                    throw new VastExceptions.NotGrammarException(
+                            "Unary ! requires boolean operand",
+                            "Operand type: " + (right != null ? right.getClass().getSimpleName() : "null"),
+                            expr.getLineNumber(),
+                            expr.getColumnNumber()
+                    );
                 case "++":
-                    // 前缀自增
                     if (right instanceof Integer) return (Integer) right + 1;
                     if (right instanceof Double) return (Double) right + 1.0;
-                    throw new RuntimeError("Unary ++ requires numeric operand");
+                    throw new VastExceptions.MathError(
+                            "Unary ++ requires numeric operand",
+                            "Operand type: " + (right != null ? right.getClass().getSimpleName() : "null")
+                    );
                 default:
-                    throw new RuntimeError("Unknown unary operator: " + expr.getOperator());
+                    throw new VastExceptions.NotGrammarException(
+                            "Unknown unary operator: " + expr.getOperator(),
+                            expr.getLineNumber(),
+                            expr.getColumnNumber()
+                    );
             }
         }
 
@@ -377,7 +385,7 @@ public class Interpreter implements ASTVisitor<Void> {
             return value;
         }
 
-        // 其他访问方法不需要实现，因为不会在表达式求值中调用
+        // 其他访问方法不需要实现
         @Override
         public Object visitVariableDeclaration(VariableDeclaration stmt) { return null; }
         @Override
@@ -404,7 +412,6 @@ public class Interpreter implements ASTVisitor<Void> {
             double exponent = toDouble(right);
             double result = Math.pow(base, exponent);
 
-            // 如果两个操作数都是整数且指数是非负整数，返回整数
             if (left instanceof Integer && right instanceof Integer && exponent >= 0) {
                 return (int) result;
             }
@@ -417,38 +424,41 @@ public class Interpreter implements ASTVisitor<Void> {
         private Object performIntegerDivision(Object left, Object right) {
             checkNumberOperands(left, right);
             if (toDouble(right) == 0) {
-                throw new RuntimeError("Division by zero");
+                throw VastExceptions.MathError.divisionByZero();
             }
             return toInt(left) / toInt(right);
         }
 
         /**
-         * 数字拼接（Volcano的++运算符）
+         * 数字拼接
          */
         private Object performNumberConcatenation(Object left, Object right) {
-            // 处理自增情况：10++ -> 11
             if (right == null || (right instanceof String && ((String) right).isEmpty())) {
                 if (left instanceof Integer) {
                     return (Integer) left + 1;
                 } else if (left instanceof Double) {
                     return (Double) left + 1.0;
                 } else {
-                    throw new RuntimeError("Cannot increment non-numeric value: " + left);
+                    throw new VastExceptions.MathError(
+                            "Cannot increment non-numeric value: " + left,
+                            "Increment operation"
+                    );
                 }
             }
 
-            // 处理自增情况：++10 -> 11（前缀自增）
             if (left == null || (left instanceof String && ((String) left).isEmpty())) {
                 if (right instanceof Integer) {
                     return (Integer) right + 1;
                 } else if (right instanceof Double) {
                     return (Double) right + 1.0;
                 } else {
-                    throw new RuntimeError("Cannot increment non-numeric value: " + right);
+                    throw new VastExceptions.MathError(
+                            "Cannot increment non-numeric value: " + right,
+                            "Increment operation"
+                    );
                 }
             }
 
-            // 正常数字拼接
             String leftStr = String.valueOf(left).replaceAll("\\.0*$", "").replaceAll("\\.", "");
             String rightStr = String.valueOf(right).replaceAll("\\.0*$", "").replaceAll("\\.", "");
 
@@ -458,7 +468,10 @@ public class Interpreter implements ASTVisitor<Void> {
                 try {
                     return Long.parseLong(leftStr + rightStr);
                 } catch (NumberFormatException e2) {
-                    throw new RuntimeError("Number concatenation result is too large: " + leftStr + rightStr);
+                    throw new VastExceptions.MathError(
+                            "Number concatenation result is too large: " + leftStr + rightStr,
+                            "Concatenation operation"
+                    );
                 }
             }
         }
@@ -469,7 +482,7 @@ public class Interpreter implements ASTVisitor<Void> {
         private Object performModulo(Object left, Object right) {
             checkNumberOperands(left, right);
             if (toDouble(right) == 0) {
-                throw new RuntimeError("Division by zero");
+                throw VastExceptions.MathError.divisionByZero();
             }
             if (left instanceof Double || right instanceof Double) {
                 return toDouble(left) % toDouble(right);
@@ -478,10 +491,9 @@ public class Interpreter implements ASTVisitor<Void> {
         }
 
         /**
-         * 字符串重复（Volcano的字符串*数字）
+         * 字符串重复
          */
         private Object performStringMultiplication(Object left, Object right) {
-            // 字符串重复：字符串 * 数字
             if (left instanceof String && right instanceof Number) {
                 String str = (String) left;
                 int count = toInt(right);
@@ -492,12 +504,14 @@ public class Interpreter implements ASTVisitor<Void> {
                 return result.toString();
             }
 
-            // 数字重复：数字 * 字符串
             if (left instanceof Number && right instanceof String) {
                 return performStringMultiplication(right, left);
             }
 
-            throw new RuntimeError("String repetition requires string and number operands");
+            throw new VastExceptions.NotGrammarException(
+                    "String repetition operation",
+                    "requires string and number operands, but got: " + left + " * " + right
+            );
         }
 
         private Object performAddition(Object left, Object right) {
@@ -510,7 +524,10 @@ public class Interpreter implements ASTVisitor<Void> {
             if (left instanceof String || right instanceof String) {
                 return stringify(left) + stringify(right);
             }
-            throw new RuntimeError("Operands must be two numbers or two strings");
+            throw new VastExceptions.MathError(
+                    "Operands must be two numbers or two strings",
+                    "Addition operation with operands: " + left + " + " + right
+            );
         }
 
         private Object performSubtraction(Object left, Object right) {
@@ -522,13 +539,11 @@ public class Interpreter implements ASTVisitor<Void> {
         }
 
         private Object performMultiplication(Object left, Object right) {
-            // 先检查字符串重复
             if ((left instanceof String && right instanceof Number) ||
                     (left instanceof Number && right instanceof String)) {
                 return performStringMultiplication(left, right);
             }
 
-            // 数字乘法
             checkNumberOperands(left, right);
             if (left instanceof Double || right instanceof Double) {
                 return toDouble(left) * toDouble(right);
@@ -539,7 +554,7 @@ public class Interpreter implements ASTVisitor<Void> {
         private Object performDivision(Object left, Object right) {
             checkNumberOperands(left, right);
             if (toDouble(right) == 0) {
-                throw new RuntimeError("Division by zero");
+                throw VastExceptions.MathError.divisionByZero();
             }
             return toDouble(left) / toDouble(right);
         }
@@ -554,25 +569,37 @@ public class Interpreter implements ASTVisitor<Void> {
             if (left instanceof String && right instanceof String) {
                 return ((String) left).compareTo((String) right);
             }
-            throw new RuntimeError("Cannot compare values of different types");
+            throw new VastExceptions.NotGrammarException(
+                    "Comparison operation",
+                    "Cannot compare values of different types: " + left + " and " + right
+            );
         }
 
         private void checkNumberOperands(Object left, Object right) {
             if (!(left instanceof Number && right instanceof Number)) {
-                throw new RuntimeError("Operands must be numbers");
+                throw new VastExceptions.MathError(
+                        "Operands must be numbers",
+                        "Operation with operands: " + left + " and " + right
+                );
             }
         }
 
         private double toDouble(Object obj) {
             if (obj instanceof Integer) return ((Integer) obj).doubleValue();
             if (obj instanceof Double) return (Double) obj;
-            throw new RuntimeError("Cannot convert to double: " + obj);
+            throw new VastExceptions.MathError(
+                    "Cannot convert to double: " + obj,
+                    "Type conversion"
+            );
         }
 
         private int toInt(Object obj) {
             if (obj instanceof Integer) return (Integer) obj;
             if (obj instanceof Double) return ((Double) obj).intValue();
-            throw new RuntimeError("Cannot convert to int: " + obj);
+            throw new VastExceptions.MathError(
+                    "Cannot convert to int: " + obj,
+                    "Type conversion"
+            );
         }
 
         private String stringify(Object object) {
@@ -585,12 +612,6 @@ public class Interpreter implements ASTVisitor<Void> {
             if (obj instanceof Number) return ((Number) obj).doubleValue() != 0;
             if (obj instanceof String) return !((String) obj).isEmpty();
             return obj != null;
-        }
-    }
-
-    public static class RuntimeError extends RuntimeException {
-        public RuntimeError(String message) {
-            super(message);
         }
     }
 }
