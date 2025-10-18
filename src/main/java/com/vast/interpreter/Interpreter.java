@@ -3,6 +3,7 @@ package com.vast.interpreter;
 import com.vast.ast.*;
 import com.vast.ast.expressions.*;
 import com.vast.ast.statements.*;
+import com.vast.registry.VastLibraryLoader;
 import com.vast.vm.VastVM;
 import com.vast.internal.exception.VastExceptions;
 
@@ -17,9 +18,18 @@ public class Interpreter implements ASTVisitor<Void> {
     private final Map<String, Object> variables = new HashMap<>();
     private Object lastResult = null;
     private final Map<String, Class<?>> importedClasses = new HashMap<>();
+    private final VastVM vm;
 
     public Object getLastResult() {
         return lastResult;
+    }
+
+    public Interpreter(VastVM vm) {
+        this.vm = vm;
+        // 复制已导入的类
+        if (vm != null && vm.getImportedClasses() != null) {
+            this.importedClasses.putAll(vm.getImportedClasses());
+        }
     }
 
     public void interpret(Program program) {
@@ -91,12 +101,30 @@ public class Interpreter implements ASTVisitor<Void> {
 
     @Override
     public Void visitImportStatement(ImportStatement stmt) {
-        System.out.println("@ Import: " + stmt.getClassName());
+        String importPath = stmt.getClassName();
+        System.out.println("@ Import: " + importPath);
+
         try {
-            Class<?> clazz = Class.forName(stmt.getClassName());
-            importedClasses.put(stmt.getClassName(), clazz);
+            // 首先尝试作为外置库导入
+            VastLibraryLoader loader = VastLibraryLoader.getInstance();
+            if (loader.loadLibraryFromImport(importPath, this.vm)) {
+                System.out.printf("@ External library loaded: %s%n", importPath);
+                return null;
+            }
+
+            // 如果外置库加载失败，尝试作为普通类导入
+            Class<?> clazz = Class.forName(importPath);
+            importedClasses.put(importPath, clazz);
+
+            // 同时更新 VM 中的导入类
+            if (vm != null) {
+                vm.getImportedClasses().put(importPath, clazz);
+            }
+
+            System.out.printf("@ Class imported: %s%n", importPath);
+
         } catch (ClassNotFoundException e) {
-            throw VastExceptions.NonExistentExternalLibraryException.forLibrary(stmt.getClassName(), e);
+            throw VastExceptions.NonExistentExternalLibraryException.forLibrary(importPath, e);
         }
         return null;
     }
@@ -207,15 +235,18 @@ public class Interpreter implements ASTVisitor<Void> {
      * 查找类
      */
     private Class<?> findClass(String className) {
+        // 首先检查内置类
         Map<String, Class<?>> builtinClasses = VastVM.getBuiltinClasses();
         if (builtinClasses.containsKey(className)) {
             return builtinClasses.get(className);
         }
 
+        // 然后检查导入的类
         if (importedClasses.containsKey(className)) {
             return importedClasses.get(className);
         }
 
+        // 最后尝试动态加载
         try {
             return Class.forName(className);
         } catch (ClassNotFoundException e) {
@@ -612,6 +643,13 @@ public class Interpreter implements ASTVisitor<Void> {
             if (obj instanceof Number) return ((Number) obj).doubleValue() != 0;
             if (obj instanceof String) return !((String) obj).isEmpty();
             return obj != null;
+        }
+
+        // 获取当前VM的方法
+        private VastVM getCurrentVM() {
+            // 这里需要根据你的架构来获取当前的VM实例
+            // 暂时返回null，实际实现时需要修改
+            return null;
         }
     }
 }

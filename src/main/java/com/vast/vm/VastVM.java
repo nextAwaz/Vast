@@ -7,6 +7,9 @@ import com.vast.parser.Lexer;
 import com.vast.parser.Parser;
 import com.vast.parser.Token;
 import com.vast.interpreter.Interpreter;
+import com.vast.registry.VastExternalLibrary;
+import com.vast.registry.VastLibraryLoader;
+import com.vast.registry.VastLibraryRegistry;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -24,6 +27,10 @@ public class VastVM {//Vast 虚拟机核心类
     private Object lastResult = null;
     private boolean debugMode = false;
 
+    // 对于外置库的支持
+    private final VastLibraryLoader libraryLoader;
+    private final VastLibraryRegistry libraryRegistry; // 添加缺失的字段
+
     static {
         // 注册内置类
         BUILTIN_CLASSES.put("Sys", com.vast.internal.Sys.class);
@@ -40,6 +47,13 @@ public class VastVM {//Vast 虚拟机核心类
         for (Map.Entry<String, Class<?>> entry : BUILTIN_CLASSES.entrySet()) {
             importedClasses.put(entry.getKey(), entry.getValue());
         }
+
+        // 初始化库加载器和注册表
+        this.libraryLoader = VastLibraryLoader.getInstance();
+        this.libraryRegistry = VastLibraryRegistry.getInstance(); // 初始化注册表
+
+        // 扫描并加载可用库
+        this.libraryLoader.scanAndLoadAvailableLibraries(this);
 
         // 初始化全局变量
         initializeGlobalVariables();
@@ -67,7 +81,6 @@ public class VastVM {//Vast 虚拟机核心类
     public void execute(List<String> sourceLines) throws Exception {
         executeWithResult(sourceLines);
     }
-
 
     /**
      * 执行源代码并返回结果
@@ -100,10 +113,12 @@ public class VastVM {//Vast 虚拟机核心类
                 System.out.println(program);
             }
 
-            // 使用解释器执行
-            Interpreter interpreter = new Interpreter();
+            // 使用解释器执行 - 传入 this
+            Interpreter interpreter = new Interpreter(this);
             interpreter.interpret(program);
 
+            // 获取最后结果
+            this.lastResult = interpreter.getLastResult();
             return getLastResult();
 
         } catch (VastExceptions.VastRuntimeException e) {
@@ -179,5 +194,39 @@ public class VastVM {//Vast 虚拟机核心类
         }
 
         return info.toString();
+    }
+
+    //============= 有关外置库的内容 ================
+    public VastLibraryLoader getLibraryLoader() {
+        return libraryLoader;
+    }
+
+    /**
+     * 手动注册外置库
+     */
+    public void registerExternalLibrary(String libraryId, Class<? extends VastExternalLibrary> libraryClass) {
+        libraryRegistry.registerLibrary(libraryId, libraryClass);
+        System.out.println("@ Registering external library: " + libraryId);
+    }
+
+    /**
+     * 手动注册外置库实例
+     */
+    public void registerExternalLibraryInstance(String libraryId, VastExternalLibrary instance) {
+        libraryRegistry.registerLibraryInstance(libraryId, instance);
+    }
+
+    /**
+     * 加载外置库
+     */
+    public boolean loadExternalLibrary(String libraryId) {
+        return libraryLoader.loadLibraryFromImport(libraryId, this);
+    }
+
+    /**
+     * 获取库注册表
+     */
+    public VastLibraryRegistry getLibraryRegistry() {
+        return libraryRegistry;
     }
 }

@@ -29,8 +29,8 @@ public class VastRuntime {
      * 执行AST程序
      */
     public void execute(Program program) throws Exception {
-        // 使用解释器执行AST
-        Interpreter interpreter = new Interpreter();
+        // 使用解释器执行AST - 传入 VastVM 实例
+        Interpreter interpreter = new Interpreter(vm);
 
         // 设置调试模式
         if (debugMode) {
