@@ -17,6 +17,7 @@ public interface ASTVisitor<T> {
     T visitMemberAccessExpression(MemberAccessExpression expr);
     T visitFunctionCallExpression(FunctionCallExpression expr);
     T visitMethodCallExpression(MethodCallExpression expr);
+    T visitTypeCastExpression(TypeCastExpression expr);
 
     // 语句访问方法
     T visitVariableDeclaration(VariableDeclaration stmt);

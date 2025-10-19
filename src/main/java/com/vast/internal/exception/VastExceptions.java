@@ -45,6 +45,24 @@ public class VastExceptions {
     }
 
     /**
+     * 类型不匹配异常
+     */
+    public static class TypeMismatchException extends VastRuntimeException {
+        public TypeMismatchException(String variableName, String expectedType, String actualType, int lineNumber) {
+            super("Type mismatch for variable '" + variableName +
+                    "': expected " + expectedType + ", but got " + actualType +
+                    " at line " + lineNumber);
+        }
+
+        public TypeMismatchException(String variableName, String expectedType, String actualType,
+                                     int lineNumber, int columnNumber) {
+            super("Type mismatch for variable '" + variableName +
+                    "': expected " + expectedType + ", but got " + actualType +
+                    " at line " + lineNumber + ", column " + columnNumber);
+        }
+    }
+
+    /**
      * 参数传递异常
      * 通过do或give语句传参数时出现的异常总类
      */
@@ -153,23 +171,46 @@ public class VastExceptions {
             super("Math error in operation '" + operation + "': " + reason);
         }
 
+        // 新增带行号和列号的构造函数
+        public MathError(String message, int lineNumber, int columnNumber) {
+            super("Math error at line " + lineNumber + ", column " + columnNumber + ": " + message);
+        }
+
         // 常见的数学异常
         public static MathError divisionByZero() {
             return new MathError("Division by zero is undefined");
+        }
+
+        public static MathError divisionByZero(int lineNumber, int columnNumber) {
+            return new MathError("Division by zero is undefined", lineNumber, columnNumber);
         }
 
         public static MathError invalidSquareRoot(double value) {
             return new MathError("Cannot calculate square root of negative number: " + value);
         }
 
+        public static MathError invalidSquareRoot(double value, int lineNumber, int columnNumber) {
+            return new MathError("Cannot calculate square root of negative number: " + value, lineNumber, columnNumber);
+        }
+
         public static MathError overflow(String operation) {
             return new MathError("Arithmetic overflow in operation: " + operation);
+        }
+
+        public static MathError overflow(String operation, int lineNumber, int columnNumber) {
+            return new MathError("Arithmetic overflow in operation: " + operation, lineNumber, columnNumber);
         }
 
         public static MathError invalidLogarithm(double value) {
             return new MathError("Cannot calculate logarithm of non-positive number: " + value);
         }
+
+        public static MathError invalidLogarithm(double value, int lineNumber, int columnNumber) {
+            return new MathError("Cannot calculate logarithm of non-positive number: " + value, lineNumber, columnNumber);
+        }
     }
+
+
 
     /**
      * 找不到外置库异常

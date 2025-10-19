@@ -26,6 +26,10 @@ public class Lexer {
         KEYWORDS.put("swap", "SWAP");
         KEYWORDS.put("true", "TRUE");
         KEYWORDS.put("false", "FALSE");
+        KEYWORDS.put("if", "IF");
+        KEYWORDS.put("else", "ELSE");
+        KEYWORDS.put("while", "WHILE");
+        KEYWORDS.put("for", "FOR");
     }
 
     public Lexer(String source) {
@@ -46,6 +50,7 @@ public class Lexer {
         return tokens;
     }
 
+
     private void scanToken() {
         char c = advance();
 
@@ -56,6 +61,7 @@ public class Lexer {
             case '}': addToken("RIGHT_BRACE"); break;
             case ',': addToken("COMMA"); break;
             case '.': addToken("DOT"); break;
+            case ':': addToken("COLON");break;
             case '-': addToken("MINUS"); break;
             case '+':
                 if (match('+')) {
@@ -131,6 +137,7 @@ public class Lexer {
                 break;
 
             case '\n':
+                addToken("NEWLINE");
                 line++;
                 column = 1;
                 break;

@@ -12,13 +12,22 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Set;
+import java.util.HashSet;
 
 // 解释器类，负责执行AST节点
 public class Interpreter implements ASTVisitor<Void> {
     private final Map<String, Object> variables = new HashMap<>();
+    private final Map<String, String> variableTypes = new HashMap<>();//变量存储类型
     private Object lastResult = null;
     private final Map<String, Class<?>> importedClasses = new HashMap<>();
     private final VastVM vm;
+
+    private boolean debugMode = false;
+
+    public void setDebugMode(boolean debug) {
+        this.debugMode = debug;
+    }
 
     public Object getLastResult() {
         return lastResult;
@@ -30,6 +39,9 @@ public class Interpreter implements ASTVisitor<Void> {
         if (vm != null && vm.getImportedClasses() != null) {
             this.importedClasses.putAll(vm.getImportedClasses());
         }
+
+        // 明显的测试输出
+        System.out.println("@ [TYPE-CHECK] Type checking system INITIALIZED - Strict mode enabled");
     }
 
     public void interpret(Program program) {
@@ -37,6 +49,7 @@ public class Interpreter implements ASTVisitor<Void> {
             program.accept(this);
         } catch (VastExceptions.VastRuntimeException error) {
             System.err.println("Runtime error: " + error.getUserFriendlyMessage());
+            throw error; // 重新抛出异常
         }
     }
 
@@ -63,6 +76,32 @@ public class Interpreter implements ASTVisitor<Void> {
 
     @Override
     public Void visitAssignmentExpression(AssignmentExpression expr) {
+        Object value = evaluate(expr.getValue());
+        String varName = expr.getVariableName();
+
+        if (debugMode) {
+            System.out.println("@ [DEBUG] Assignment expression: " + varName + " = " + value);
+        }
+
+        // 严格的类型检查
+        if (variableTypes.containsKey(varName)) {
+            String expectedType = variableTypes.get(varName);
+            validateTypeCompatibility(expectedType, value, varName,
+                    expr.getLineNumber(), expr.getColumnNumber());
+        }
+
+        variables.put(varName, value);
+        return null;
+    }
+
+    // 修复：返回类型改为 Void
+    @Override
+    public Void visitTypeCastExpression(TypeCastExpression expr) {
+        // 类型转换表达式应该在 ExpressionEvaluator 中处理
+        // 这里只需要确保它被正确处理
+        if (debugMode) {
+            System.out.println("@ [TYPE-CAST] Type cast expression: " + expr);
+        }
         return null;
     }
 
@@ -94,19 +133,85 @@ public class Interpreter implements ASTVisitor<Void> {
             value = evaluate(stmt.getInitialValue());
         }
 
-        variables.put(stmt.getVariableName(), value);
+        String varName = stmt.getVariableName();
+        String typeHint = stmt.getTypeHint();
+
+        System.out.println("@ [VAR-DECL] Variable declaration: " + varName +
+                ", typeHint: " + typeHint + ", initial value: " + value);
+
+        // 如果有类型提示，记录变量类型并严格验证初始值
+        if (typeHint != null) {
+            variableTypes.put(varName, typeHint);
+            System.out.println("@ [VAR-DECL] Registered type constraint: " + varName + " -> " + typeHint);
+
+            // 严格验证初始值的类型
+            if (value != null) {
+                validateTypeCompatibility(typeHint, value, varName,
+                        stmt.getLineNumber(), stmt.getColumnNumber());
+            } else {
+                System.out.println("@ [VAR-DECL] Null initial value for typed variable " + varName);
+            }
+        }
+
+        variables.put(varName, value);
         this.lastResult = value;
-        System.out.println("@ Var declared: " + stmt.getVariableName() + " = " + value);
+        System.out.println("@ Var declared: " + varName + " = " + value +
+                (typeHint != null ? " (type: " + typeHint + ")" : ""));
         return null;
     }
+
 
     @Override
     public Void visitAssignmentStatement(AssignmentStatement stmt) {
         Object value = evaluate(stmt.getValue());
-        variables.put(stmt.getVariableName(), value);
+        String varName = stmt.getVariableName();
+
+        System.out.println("@ [TYPE-CHECK] Assignment: " + varName + " = " + value +
+                " (value type: " + getValueType(value) + ")");
+
+        // 严格的类型检查 - 如果变量有类型约束
+        if (variableTypes.containsKey(varName)) {
+            String expectedType = variableTypes.get(varName);
+            System.out.println("@ [TYPE-CHECK] Variable '" + varName + "' has type constraint: " + expectedType);
+
+            validateTypeCompatibility(expectedType, value, varName,
+                    stmt.getLineNumber(), stmt.getColumnNumber());
+            System.out.println("@ [TYPE-CHECK] Type check PASSED for " + varName);
+        } else {
+            System.out.println("@ [TYPE-CHECK] No type constraint for " + varName + ", allowing assignment");
+        }
+
+        variables.put(varName, value);
         this.lastResult = value;
-        System.out.println("@ Var assigned: " + stmt.getVariableName() + " = " + value);
+        System.out.println("@ Var assigned: " + varName + " = " + value);
         return null;
+    }
+
+
+    /**
+     * 检查类型兼容性，不兼容时抛出异常
+     */
+    private void validateTypeCompatibility(String expectedType, Object value, String varName,
+                                           int lineNumber, int columnNumber) {
+        if (value == null) {
+            System.out.println("@ [TYPE-CHECK] Null value allowed for any type");
+            return; // null 可以赋值给任何类型
+        }
+
+        String actualType = getValueType(value);
+        System.out.println("@ [TYPE-CHECK] Validating compatibility: " + expectedType + " <- " + actualType);
+
+        if (!isTypeCompatible(expectedType, value)) {
+            String errorMsg = "Type mismatch: cannot assign " + actualType +
+                    " to variable '" + varName + "' of type " + expectedType;
+            System.out.println("@ [TYPE-CHECK] ERROR: " + errorMsg);
+
+            // 直接抛出异常，不捕获
+            throw new VastExceptions.NotGrammarException(
+                    errorMsg, lineNumber, columnNumber
+            );
+        }
+        System.out.println("@ [TYPE-CHECK] Type compatibility OK: " + expectedType + " <- " + actualType);
     }
 
     @Override
@@ -127,8 +232,9 @@ public class Interpreter implements ASTVisitor<Void> {
         try {
             // 首先尝试作为外置库导入
             VastLibraryLoader loader = VastLibraryLoader.getInstance();
-            // 注意：这里需要修改 VastLibraryLoader 中的方法为 public
-            if (loader.loadLibraryFromImport(importPath, this.vm)) {
+            boolean libraryLoaded = loader.loadLibraryFromImport(importPath, this.vm);
+
+            if (libraryLoaded) {
                 System.out.printf("@ External library loaded: %s%n", importPath);
                 return null;
             }
@@ -145,18 +251,71 @@ public class Interpreter implements ASTVisitor<Void> {
             System.out.printf("@ Class imported: %s%n", importPath);
 
         } catch (ClassNotFoundException e) {
-            throw VastExceptions.NonExistentExternalLibraryException.forLibrary(importPath, e);
+            // 静默处理类未找到异常，不抛出错误
+            System.out.printf("@ Class not found: %s%n", importPath);
+        } catch (Exception e) {
+            // 静默处理其他异常
+            System.out.printf("@ Import failed: %s%n", importPath);
         }
         return null;
     }
 
     @Override
     public Void visitLoopStatement(LoopStatement stmt) {
-        System.out.println("@ Loop: " + stmt.getCondition());
         Object condition = evaluate(stmt.getCondition());
-        if (condition instanceof Boolean && (Boolean) condition) {
-            for (Statement bodyStmt : stmt.getBody()) {
-                bodyStmt.accept(this);
+
+        if (debugMode) {
+            System.out.println("@ Loop condition: " + condition + " (type: " +
+                    (condition != null ? condition.getClass().getSimpleName() : "null") + ")");
+        }
+
+        // 处理数字类型的循环条件（如 loop(10):）
+        if (condition instanceof Number) {
+            int count = ((Number) condition).intValue();
+
+            if (debugMode) {
+                System.out.println("@ Loop count: " + count);
+            }
+
+            for (int i = 0; i < count; i++) {
+                if (debugMode) {
+                    System.out.println("@ Loop iteration: " + (i + 1) + "/" + count);
+                }
+
+                // 执行循环体中的所有语句
+                for (Statement bodyStmt : stmt.getBody()) {
+                    bodyStmt.accept(this);
+                }
+            }
+        }
+        // 处理布尔类型的循环条件（如 loop(true): 或 loop(a > b):）
+        else if (condition instanceof Boolean) {
+            if ((Boolean) condition) {
+                if (debugMode) {
+                    System.out.println("@ Boolean condition is true, executing loop body");
+                }
+                for (Statement bodyStmt : stmt.getBody()) {
+                    bodyStmt.accept(this);
+                }
+            } else {
+                if (debugMode) {
+                    System.out.println("@ Boolean condition is false, skipping loop");
+                }
+            }
+        }
+        else {
+            // 默认情况下，如果条件不是数字或布尔值，当作真值处理并执行一次
+            if (condition != null) {
+                if (debugMode) {
+                    System.out.println("@ Non-boolean condition, executing loop body once");
+                }
+                for (Statement bodyStmt : stmt.getBody()) {
+                    bodyStmt.accept(this);
+                }
+            } else {
+                if (debugMode) {
+                    System.out.println("@ Null condition, skipping loop");
+                }
             }
         }
         return null;
@@ -324,6 +483,75 @@ public class Interpreter implements ASTVisitor<Void> {
     }
 
     /**
+     * 检查值是否与声明的类型兼容
+     */
+    private boolean isTypeCompatible(String expectedType, Object value) {
+        if (value == null) return true; // null 可以赋值给任何类型
+
+        switch (expectedType) {
+            case "int":
+            case "int32":
+                return value instanceof Integer;
+            case "int8":
+            case "byte":
+                if (value instanceof Byte) return true;
+                if (value instanceof Integer) {
+                    int intValue = (Integer) value;
+                    return intValue >= Byte.MIN_VALUE && intValue <= Byte.MAX_VALUE;
+                }
+                return false;
+            case "int16":
+            case "short":
+                if (value instanceof Short) return true;
+                if (value instanceof Integer) {
+                    int intValue = (Integer) value;
+                    return intValue >= Short.MIN_VALUE && intValue <= Short.MAX_VALUE;
+                }
+                return false;
+            case "int64":
+            case "long":
+                return value instanceof Long || value instanceof Integer;
+            case "double":
+                return value instanceof Double || value instanceof Integer;
+            case "float":
+                return value instanceof Float || value instanceof Integer || value instanceof Double;
+            case "bool":
+            case "boolean":
+                return value instanceof Boolean;
+            case "string":
+                return value instanceof String;
+            case "char":
+                return value instanceof Character ||
+                        (value instanceof String && ((String) value).length() == 1);
+            case "large":
+                // large 可以接受任何数值类型
+                return value instanceof Integer || value instanceof Long ||
+                        value instanceof java.math.BigInteger;
+            default:
+                // 未知类型，允许任何赋值
+                return true;
+        }
+    }
+
+    /**
+     * 获取值的类型描述
+     */
+    private String getValueType(Object value) {
+        if (value == null) return "null";
+        if (value instanceof Integer) return "int";
+        if (value instanceof Double) return "double";
+        if (value instanceof Float) return "float";
+        if (value instanceof Boolean) return "boolean";
+        if (value instanceof String) return "string";
+        if (value instanceof Character) return "char";
+        if (value instanceof Byte) return "byte";
+        if (value instanceof Short) return "short";
+        if (value instanceof Long) return "long";
+        if (value instanceof java.math.BigInteger) return "large";
+        return value.getClass().getSimpleName();
+    }
+
+    /**
      * 计算表达式的值
      */
     private Object evaluate(Expression expr) {
@@ -341,10 +569,25 @@ public class Interpreter implements ASTVisitor<Void> {
 
         @Override
         public Object visitVariableExpression(VariableExpression expr) {
-            if (!variables.containsKey(expr.getName())) {
-                throw VastExceptions.NonExistentObject.variableNotFound(expr.getName());
+            String name = expr.getName();
+
+            // 首先检查是否是内置类名
+            Map<String, Class<?>> builtinClasses = VastVM.getBuiltinClasses();
+            if (builtinClasses.containsKey(name)) {
+                // 返回类名字符串，这样在成员访问时能识别为类
+                return name;
             }
-            return variables.get(expr.getName());
+
+            // 然后检查是否是导入的类名
+            if (importedClasses.containsKey(name)) {
+                return name;
+            }
+
+            // 最后检查变量
+            if (!variables.containsKey(name)) {
+                throw VastExceptions.NonExistentObject.variableNotFound(name);
+            }
+            return variables.get(name);
         }
 
         @Override
@@ -404,6 +647,28 @@ public class Interpreter implements ASTVisitor<Void> {
 
             // 调用内部方法
             return Interpreter.this.callInternalMethod(className, methodName, args);
+        }
+
+        // 修复：添加 TypeCastExpression 的求值方法
+        @Override
+        public Object visitTypeCastExpression(TypeCastExpression expr) {
+            Object value = evaluate(expr.getExpression());
+            String targetType = expr.getTargetType();
+
+            if (Interpreter.this.debugMode) {
+                System.out.println("@ [TYPE-CAST-EVAL] Casting " + value + " (" + getValueType(value) +
+                        ") to " + targetType);
+            }
+
+            Object result = Interpreter.this.performTypeCast(value, targetType,
+                    expr.getLineNumber(), expr.getColumnNumber(),
+                    expr.isExplicit());
+
+            if (Interpreter.this.debugMode) {
+                System.out.println("@ [TYPE-CAST-EVAL] Result: " + result + " (" + getValueType(result) + ")");
+            }
+
+            return result;
         }
 
         @Override
@@ -492,27 +757,44 @@ public class Interpreter implements ASTVisitor<Void> {
         @Override
         public Object visitAssignmentExpression(AssignmentExpression expr) {
             Object value = evaluate(expr.getValue());
-            variables.put(expr.getVariableName(), value);
+            String varName = expr.getVariableName();
+
+            System.out.println("@ [EXPR-ASSIGN] Assignment expression: " + varName + " = " + value +
+                    " (value type: " + getValueType(value) + ")");
+
+            // 严格的类型检查
+            if (Interpreter.this.variableTypes.containsKey(varName)) {
+                String expectedType = Interpreter.this.variableTypes.get(varName);
+                System.out.println("@ [EXPR-ASSIGN] Variable '" + varName + "' has type constraint: " + expectedType);
+
+                Interpreter.this.validateTypeCompatibility(expectedType, value, varName,
+                        expr.getLineNumber(), expr.getColumnNumber());
+                System.out.println("@ [EXPR-ASSIGN] Type check PASSED for " + varName);
+            } else {
+                System.out.println("@ [EXPR-ASSIGN] No type constraint for " + varName + ", allowing assignment");
+            }
+
+            variables.put(varName, value);
             return value;
         }
 
         // 其他访问方法不需要实现
         @Override
-        public Object visitVariableDeclaration(VariableDeclaration stmt) { return null; }
+        public Void visitVariableDeclaration(VariableDeclaration stmt) { return null; }
         @Override
-        public Object visitAssignmentStatement(AssignmentStatement stmt) { return null; }
+        public Void visitAssignmentStatement(AssignmentStatement stmt) { return null; }
         @Override
-        public Object visitExpressionStatement(ExpressionStatement stmt) { return null; }
+        public Void visitExpressionStatement(ExpressionStatement stmt) { return null; }
         @Override
-        public Object visitImportStatement(ImportStatement stmt) { return null; }
+        public Void visitImportStatement(ImportStatement stmt) { return null; }
         @Override
-        public Object visitLoopStatement(LoopStatement stmt) { return null; }
+        public Void visitLoopStatement(LoopStatement stmt) { return null; }
         @Override
-        public Object visitGiveStatement(GiveStatement stmt) { return null; }
+        public Void visitGiveStatement(GiveStatement stmt) { return null; }
         @Override
-        public Object visitDoStatement(DoStatement stmt) { return null; }
+        public Void visitDoStatement(DoStatement stmt) { return null; }
         @Override
-        public Object visitSwapStatement(SwapStatement stmt) { return null; }
+        public Void visitSwapStatement(SwapStatement stmt) { return null; }
 
         // 其他辅助方法保持不变...
         private Object performPower(Object left, Object right) {
@@ -710,6 +992,181 @@ public class Interpreter implements ASTVisitor<Void> {
             if (obj instanceof String) return !((String) obj).isEmpty();
             return obj != null;
         }
+    }
+
+    /**
+     * 执行类型转换
+     */
+    private Object performTypeCast(Object value, String targetType,
+                                   int lineNumber, int columnNumber, boolean isExplicit) {
+        if (value == null) {
+            return null;
+        }
+
+        try {
+            switch (targetType) {
+                case "int":
+                case "int32":
+                    return castToInt(value, isExplicit, lineNumber, columnNumber);
+
+                case "bool":
+                case "boolean":
+                    return castToBoolean(value, isExplicit, lineNumber, columnNumber);
+
+                case "string":
+                    return castToString(value);
+
+                case "double":
+                    return castToDouble(value, isExplicit, lineNumber, columnNumber);
+
+                case "char":
+                    return castToChar(value, isExplicit, lineNumber, columnNumber);
+
+                default:
+                    // 未知类型，返回原值
+                    if (!isExplicit) {
+                        System.out.println("@ [WARNING] Unknown target type: " + targetType);
+                    }
+                    return value;
+            }
+        } catch (VastExceptions.VastRuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new VastExceptions.MathError(
+                    "Type cast failed: cannot convert " + getValueType(value) + " to " + targetType,
+                    lineNumber, columnNumber
+            );
+        }
+    }
+
+    /**
+     * 转换为整数
+     */
+    private Object castToInt(Object value, boolean isExplicit, int lineNumber, int columnNumber) {
+        if (value instanceof Integer) return value;
+        if (value instanceof Double) return ((Double) value).intValue();
+        if (value instanceof Boolean) return (Boolean) value ? 1 : 0;
+        if (value instanceof String) {
+            String str = (String) value;
+            try {
+                // 尝试解析为整数
+                return Integer.parseInt(str);
+            } catch (NumberFormatException e) {
+                try {
+                    // 尝试解析为浮点数然后取整
+                    double d = Double.parseDouble(str);
+                    if (!isExplicit) {
+                        System.out.println("@ [WARNING] Losing precision in implicit cast: " + str + " -> " + (int)d);
+                    }
+                    return (int) d;
+                } catch (NumberFormatException e2) {
+                    throw new VastExceptions.MathError(
+                            "Cannot convert string to int: '" + str + "' contains non-numeric characters",
+                            lineNumber, columnNumber
+                    );
+                }
+            }
+        }
+        if (value instanceof Character) {
+            return (int) (Character) value;
+        }
+        throw new VastExceptions.MathError(
+                "Cannot convert " + getValueType(value) + " to int",
+                lineNumber, columnNumber
+        );
+    }
+
+    /**
+     * 转换为布尔值
+     */
+    private Object castToBoolean(Object value, boolean isExplicit, int lineNumber, int columnNumber) {
+        if (value instanceof Boolean) return value;
+        if (value instanceof Integer) {
+            int intValue = (Integer) value;
+            if (intValue == 0 || intValue == 1) {
+                return intValue == 1;
+            } else {
+                throw new VastExceptions.MathError(
+                        "Cannot convert integer to boolean: only 0 and 1 are allowed, got " + intValue,
+                        lineNumber, columnNumber
+                );
+            }
+        }
+        if (value instanceof String) {
+            String str = ((String) value).toLowerCase();
+            if (str.equals("true") || str.equals("1")) return true;
+            if (str.equals("false") || str.equals("0")) return false;
+            throw new VastExceptions.MathError(
+                    "Cannot convert string to boolean: only 'true', 'false', '1', '0' are allowed",
+                    lineNumber, columnNumber
+            );
+        }
+        throw new VastExceptions.MathError(
+                "Cannot convert " + getValueType(value) + " to boolean",
+                lineNumber, columnNumber
+        );
+    }
+
+    /**
+     * 转换为字符串
+     */
+    private Object castToString(Object value) {
+        return value != null ? value.toString() : "null";
+    }
+
+    /**
+     * 转换为双精度浮点数
+     */
+    private Object castToDouble(Object value, boolean isExplicit, int lineNumber, int columnNumber) {
+        if (value instanceof Double) return value;
+        if (value instanceof Integer) return ((Integer) value).doubleValue();
+        if (value instanceof String) {
+            try {
+                return Double.parseDouble((String) value);
+            } catch (NumberFormatException e) {
+                throw new VastExceptions.MathError(
+                        "Cannot convert string to double: '" + value + "' contains non-numeric characters",
+                        lineNumber, columnNumber
+                );
+            }
+        }
+        throw new VastExceptions.MathError(
+                "Cannot convert " + getValueType(value) + " to double",
+                lineNumber, columnNumber
+        );
+    }
+
+    /**
+     * 转换为字符
+     */
+    private Object castToChar(Object value, boolean isExplicit, int lineNumber, int columnNumber) {
+        if (value instanceof Character) return value;
+        if (value instanceof Integer) {
+            int code = (Integer) value;
+            if (code >= Character.MIN_VALUE && code <= Character.MAX_VALUE) {
+                return (char) code;
+            } else {
+                throw new VastExceptions.MathError(
+                        "Integer value " + code + " is out of char range",
+                        lineNumber, columnNumber
+                );
+            }
+        }
+        if (value instanceof String) {
+            String str = (String) value;
+            if (str.length() > 0) {
+                return str.charAt(0);
+            } else {
+                throw new VastExceptions.MathError(
+                        "Cannot convert empty string to char",
+                        lineNumber, columnNumber
+                );
+            }
+        }
+        throw new VastExceptions.MathError(
+                "Cannot convert " + getValueType(value) + " to char",
+                lineNumber, columnNumber
+        );
     }
 
     // 静态方法引用辅助类

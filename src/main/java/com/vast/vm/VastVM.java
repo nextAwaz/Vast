@@ -122,20 +122,14 @@ public class VastVM {//Vast 虚拟机核心类
             return getLastResult();
 
         } catch (VastExceptions.VastRuntimeException e) {
-            // 处理Vast特定异常
+            // 只输出用户友好的错误信息，不输出堆栈跟踪
             System.err.println(e.getUserFriendlyMessage());
-            if (debugMode) {
-                e.printStackTrace();
-            }
             throw e;
         } catch (Exception e) {
-            // 将其他异常包装为Vast异常
+            // 简化未知异常的处理
             VastExceptions.UnknownVastException vastException =
                     new VastExceptions.UnknownVastException("Unexpected error during execution", e);
             System.err.println(vastException.getUserFriendlyMessage());
-            if (debugMode) {
-                e.printStackTrace();
-            }
             throw vastException;
         }
     }

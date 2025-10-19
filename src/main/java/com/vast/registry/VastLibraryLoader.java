@@ -32,25 +32,55 @@ public class VastLibraryLoader {
             // 解析导入路径（支持注释）
             String cleanPath = importPath.split("//")[0].trim();
 
-            // 跳过 VM 自身的类
-            if (cleanPath.startsWith("com.vast.") || cleanPath.equals("VastVM")) {
-                return false; // 让后续的类加载器处理
+            // 直接跳过 VM 自身的类和内置类
+            if (isVastVMClass(cleanPath)) {
+                return false; // 静默跳过，不报错
             }
 
             // 查找库文件
             File libraryFile = findLibraryFile(cleanPath);
             if (libraryFile == null) {
-                System.err.printf("[Info] Library not found, trying as Java class: %s%n", cleanPath);
                 return false; // 让后续的类加载器处理
+            }
+
+            // 再次检查是否是 VM 自身的 JAR
+            if (isVastVMJar(libraryFile)) {
+                return false; // 静默跳过，不报错
             }
 
             return loadLibraryFromFile(libraryFile, vm);
 
         } catch (Exception e) {
-            System.err.printf("[Error] Failed to load library from import '%s': %s%n",
-                    importPath, e.getMessage());
+            // 静默处理异常，不打印错误信息
             return false;
         }
+    }
+
+    /**
+     * 检查是否是 VM 自身的类
+     */
+    private boolean isVastVMClass(String className) {
+        // VM 内置类
+        Set<String> builtinClasses = Set.of(
+                "Sys", "Time", "Array", "Ops", "DataType",
+                "EncodingUtil", "EnhancedInput", "VastVM"
+        );
+
+        if (builtinClasses.contains(className)) {
+            return true;
+        }
+
+        // VM 包下的类
+        return className.startsWith("com.vast.");
+    }
+
+    /**
+     * 检查是否是 VM 自身的 JAR 文件
+     */
+    private boolean isVastVMJar(File jarFile) {
+        String jarName = jarFile.getName().toLowerCase();
+        return jarName.contains("vast") &&
+                (jarName.contains("vm") || jarName.contains("vast-vm"));
     }
 
     /**
@@ -67,14 +97,20 @@ public class VastLibraryLoader {
         }
 
         currentDirLib = new File(path + ".zip");
-        if (currentDirLib.exists()) return currentDirLib;
+        if (currentDirLib.exists() && !isVastVMJar(currentDirLib)) {
+            return currentDirLib;
+        }
 
         // 2. 在全局库目录查找
         File globalLib = new File(registry.getGlobalLibsDir(), path + ".jar");
-        if (globalLib.exists()) return globalLib;
+        if (globalLib.exists() && !isVastVMJar(globalLib)) {
+            return globalLib;
+        }
 
         globalLib = new File(registry.getGlobalLibsDir(), path + ".zip");
-        if (globalLib.exists()) return globalLib;
+        if (globalLib.exists() && !isVastVMJar(globalLib)) {
+            return globalLib;
+        }
 
         return null;
     }
@@ -94,15 +130,13 @@ public class VastLibraryLoader {
                 // 查找库描述文件
                 LibraryMetadata metadata = findLibraryMetadata(tempDir);
                 if (metadata == null) {
-                    System.err.printf("[Error] No library metadata found in: %s%n", libraryFile.getName());
-                    return false;
+                    return false; // 静默失败
                 }
 
                 // 加载库类
                 VastExternalLibrary library = loadLibraryClass(tempDir, metadata);
                 if (library == null) {
-                    System.err.printf("[Error] Failed to load library class for: %s%n", metadata.getName());
-                    return false;
+                    return false; // 静默失败
                 }
 
                 // 注册库实例
@@ -117,8 +151,7 @@ public class VastLibraryLoader {
             }
 
         } catch (Exception e) {
-            System.err.printf("[Error] Failed to load library from file '%s': %s%n",
-                    libraryFile.getName(), e.getMessage());
+            // 静默处理异常
             return false;
         }
     }
@@ -148,8 +181,6 @@ public class VastLibraryLoader {
             }
         }
     }
-
-
 
     /**
      * 查找库元数据
@@ -193,12 +224,6 @@ public class VastLibraryLoader {
         return config;
     }
 
-    private boolean isVastVMJar(File jarFile) {
-        // 检查是否是 Vast VM 自身的 JAR 文件
-        String jarName = jarFile.getName().toLowerCase();
-        return jarName.contains("vast") && jarName.contains("vm");
-    }
-
     /**
      * 加载库类
      */
@@ -211,20 +236,17 @@ public class VastLibraryLoader {
             // 加载主类
             String mainClass = metadata.getConfiguration().get("mainClass");
             if (mainClass == null) {
-                System.err.println("[Error] No mainClass specified in library metadata");
                 return null;
             }
 
             Class<?> clazz = classLoader.loadClass(mainClass);
             if (!VastExternalLibrary.class.isAssignableFrom(clazz)) {
-                System.err.printf("[Error] Main class %s does not implement VastExternalLibrary%n", mainClass);
                 return null;
             }
 
             return (VastExternalLibrary) clazz.getDeclaredConstructor().newInstance();
 
         } catch (Exception e) {
-            System.err.printf("[Error] Failed to load library class: %s%n", e.getMessage());
             return null;
         }
     }
@@ -252,7 +274,6 @@ public class VastLibraryLoader {
         scanLibraryDirectory(new File("."), vm);
     }
 
-
     private void scanLibraryDirectory(File dir, VastVM vm) {
         if (!dir.exists() || !dir.isDirectory()) {
             return;
@@ -263,11 +284,15 @@ public class VastLibraryLoader {
 
         if (files != null) {
             for (File file : files) {
+                // 跳过 VM 自身的 JAR 文件
+                if (isVastVMJar(file)) {
+                    continue;
+                }
+
                 try {
                     loadLibraryFromFile(file, vm);
                 } catch (Exception e) {
-                    System.err.printf("[Warning] Failed to scan library %s: %s%n",
-                            file.getName(), e.getMessage());
+                    // 静默处理异常
                 }
             }
         }

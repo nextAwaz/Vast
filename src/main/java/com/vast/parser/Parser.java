@@ -3,8 +3,11 @@ package com.vast.parser;
 import com.vast.ast.*;
 import com.vast.ast.expressions.*;
 import com.vast.ast.statements.*;
+
+import java.util.HashSet;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Set;
 
 //语法分析器
 public class Parser {
@@ -22,22 +25,46 @@ public class Parser {
         List<Statement> statements = new ArrayList<>();
 
         while (!isAtEnd()) {
+            // 跳过换行符
+            while (match("NEWLINE")) {
+                // 继续跳过
+            }
+
+            if (isAtEnd()) break;
+
             Statement stmt = parseStatement();
             if (stmt != null) {
                 statements.add(stmt);
             }
+
+            // 在语句后跳过换行符
+            match("NEWLINE");
         }
 
         return new Program(statements);
     }
 
+
     private Statement parseStatement() {
+        // 跳过语句前的换行符
+        while (match("NEWLINE")) {
+            // 继续跳过
+        }
+
+        if (isAtEnd()) return null;
+
         if (match("IMPORT")) {
             return parseImportStatement();
         }
         if (match("VAR")) {
             return parseVariableDeclaration();
         }
+
+        // 新增：检查是否是类型声明（如 int x, string name 等）
+        if (check("IDENTIFIER") && isTypeName(peek().getLexeme())) {
+            return parseTypedVariableDeclaration();
+        }
+
         if (match("LOOP")) {
             return parseLoopStatement();
         }
@@ -55,6 +82,7 @@ public class Parser {
         return parseExpressionOrAssignment();
     }
 
+
     private Statement parseImportStatement() {
         Token importToken = previous();
         consume("IDENTIFIER", "Expect library or class name after 'imp'");
@@ -67,36 +95,63 @@ public class Parser {
     private VariableDeclaration parseVariableDeclaration() {
         Token varToken = previous();
         String typeHint = null;
+        boolean isExplicitCast = false;
+        String castType = null;
 
-        // 检查是否有类型提示
-        if (match("LEFT_PAREN")) {
-            if (check("IDENTIFIER")) {
-                typeHint = advance().getLexeme();
-            }
-            consume("RIGHT_PAREN", "Expect ')' after type hint");
+        // 检查是否有类型提示（新语法：类型名直接作为开始）
+        if (check("IDENTIFIER") && isTypeName(peek().getLexeme())) {
+            typeHint = advance().getLexeme();
         }
 
         String name = consume("IDENTIFIER", "Expect variable name").getLexeme();
 
         Expression initializer = null;
         if (match("EQUAL")) {
-            // 支持类型转换语法：var (newType) name = (oldType) expression
-            if (match("LEFT_PAREN")) {
-                if (check("IDENTIFIER")) {
-                    String sourceType = advance().getLexeme();
-                    consume("RIGHT_PAREN", "Expect ')' after source type");
+            // 检查是否有显式类型转换语法：newName = oldName(type)
+            if (check("IDENTIFIER")) {
+                Token identifierToken = peek();
+                String identifierName = identifierToken.getLexeme();
 
-                    // 解析实际表达式
-                    Expression expr = parseExpression();
-                    // 这里可以创建类型转换表达式，简化处理直接使用原表达式
-                    initializer = expr;
+                // 查看下一个token是否是左括号接类型名
+                if (current + 1 < tokens.size() &&
+                        tokens.get(current + 1).getType().equals("LEFT_PAREN") &&
+                        current + 2 < tokens.size() &&
+                        tokens.get(current + 2).getType().equals("IDENTIFIER") &&
+                        isTypeName(tokens.get(current + 2).getLexeme()) &&
+                        current + 3 < tokens.size() &&
+                        tokens.get(current + 3).getType().equals("RIGHT_PAREN")) {
+
+                    // 这是显式类型转换：name = oldName(type)
+                    advance(); // 消耗标识符
+                    advance(); // 消耗左括号
+                    castType = advance().getLexeme(); // 消耗类型名
+                    advance(); // 消耗右括号
+                    isExplicitCast = true;
+
+                    // 创建变量表达式作为被转换的值
+                    Expression sourceExpr = new VariableExpression(identifierName,
+                            identifierToken.getLine(), identifierToken.getColumn());
+
+                    // 创建类型转换表达式
+                    initializer = new TypeCastExpression(sourceExpr, castType,
+                            identifierToken.getLine(), identifierToken.getColumn());
+                } else {
+                    // 普通表达式
+                    initializer = parseExpression();
                 }
             } else {
+                // 普通表达式
                 initializer = parseExpression();
             }
         }
 
-        return new VariableDeclaration(name, typeHint, initializer,
+        // 如果是隐式类型转换（强类型声明但初始值类型不同），生成警告
+        if (typeHint != null && initializer != null && !isExplicitCast) {
+            // 这里我们只记录需要警告，实际警告在解释器阶段生成
+            System.out.println("@ [WARNING] Implicit type conversion for variable: " + name);
+        }
+
+        return new VariableDeclaration(name, typeHint, initializer, isExplicitCast,
                 varToken.getLine(), varToken.getColumn());
     }
 
@@ -107,11 +162,80 @@ public class Parser {
         consume("RIGHT_PAREN", "Expect ')' after loop condition");
         consume("COLON", "Expect ':' after loop condition");
 
-        // 解析循环体（需要处理缩进块）
-        List<Statement> body = parseBlock();
+        // 跳过换行符（如果有）
+        match("NEWLINE");
+
+        // 解析所有缩进的语句作为循环体
+        List<Statement> body = parseIndentedBlock();
 
         return new LoopStatement(condition, body,
                 loopToken.getLine(), loopToken.getColumn());
+    }
+
+    /**
+     * 解析缩进代码块
+     */
+    private List<Statement> parseIndentedBlock() {
+        List<Statement> statements = new ArrayList<>();
+
+        if (isAtEnd()) {
+            return statements;
+        }
+
+        // 获取第一行的缩进级别
+        int baseIndent = getCurrentIndent();
+        int blockIndent = -1;
+
+        // 跳过开头的空行
+        while (match("NEWLINE")) {
+            // 继续跳过
+        }
+
+        // 解析缩进块中的语句
+        while (!isAtEnd()) {
+            // 检查当前token的缩进
+            Token currentToken = peek();
+            int currentIndent = currentToken.getColumn();
+
+            // 如果是文件开始或者没有缩进，结束块
+            if (currentIndent <= baseIndent) {
+                break;
+            }
+
+            // 如果是块的第一条语句，记录缩进级别
+            if (blockIndent == -1) {
+                blockIndent = currentIndent;
+            }
+
+            // 如果缩进级别匹配，解析语句
+            if (currentIndent >= blockIndent) {
+                Statement stmt = parseStatement();
+                if (stmt != null) {
+                    statements.add(stmt);
+                }
+
+                // 跳过语句后的换行符
+                while (match("NEWLINE")) {
+                    // 继续跳过
+                }
+            } else {
+                // 缩进减少，结束块
+                break;
+            }
+        }
+
+        return statements;
+    }
+
+    /**
+     * 检查当前行是否缩进
+     */
+    private boolean isIndentedLine() {
+        if (isAtEnd()) return false;
+
+        Token token = peek();
+        // 简化判断：如果列号大于1，则认为有缩进
+        return token.getColumn() > 1;
     }
 
     private Statement parseGiveStatement() {
@@ -189,13 +313,11 @@ public class Parser {
     private Statement parseExpressionOrAssignment() {
         Expression expr = parseExpression();
 
-        // 检查是否是方法调用
+        // 检查是否是方法调用：ClassName.method(args)
         if (expr instanceof VariableExpression && match("DOT")) {
-            // 处理类名.方法名 的情况
             if (match("IDENTIFIER")) {
                 String methodName = previous().getLexeme();
 
-                // 检查是否有参数列表
                 if (match("LEFT_PAREN")) {
                     List<Expression> arguments = parseExpressionList();
                     consume("RIGHT_PAREN", "Expect ')' after arguments");
@@ -232,17 +354,85 @@ public class Parser {
     private List<Statement> parseBlock() {
         List<Statement> statements = new ArrayList<>();
 
-        // 简化处理：解析直到遇到非缩进行
-        // 实际实现需要处理缩进级别
-        while (!isAtEnd() && !check("DEDENT")) {
+        // 简化处理：解析直到遇到非缩进行或文件结束
+        // 这里我们假设缩进级别是固定的（4个空格）
+        int currentIndent = getCurrentIndent();
+
+        while (!isAtEnd()) {
+            // 检查下一行的缩进级别
+            int nextIndent = peekNextIndent();
+
+            // 如果下一行的缩进小于当前缩进，则结束块
+            if (nextIndent < currentIndent) {
+                break;
+            }
+
+            // 如果下一行没有缩进，也结束块
+            if (nextIndent == 0) {
+                break;
+            }
+
+            // 解析语句
             Statement stmt = parseStatement();
             if (stmt != null) {
                 statements.add(stmt);
+            }
+
+            // 跳过换行符
+            if (match("NEWLINE")) {
+                // 继续
             }
         }
 
         return statements;
     }
+
+    /**
+     *  获取当前token的缩进级别
+     */
+    private int getCurrentIndent() {
+        if (isAtEnd()) return 0;
+
+        Token token = peek();
+        // 列号从1开始，所以缩进级别是列号-1
+        return token.getColumn() - 1;
+    }
+
+    /**
+     * 查看下一行的缩进级别
+     */
+    private int peekNextIndent() {
+        // 保存当前状态
+        int savedCurrent = current;
+
+        // 跳过空白和换行符，找到下一个非空白字符
+        while (!isAtEnd()) {
+            Token token = tokens.get(current);
+            if (token.getType().equals("NEWLINE")) {
+                current++;
+                continue;
+            }
+
+            // 计算缩进
+            int indent = calculateIndent(token);
+            current = savedCurrent; // 恢复状态
+            return indent;
+        }
+
+        current = savedCurrent;
+        return 0;
+    }
+
+    /**
+     * 计算token的缩进级别
+     */
+    private int calculateIndent(Token token) {
+        // 简化处理：假设每4个空格为一个缩进级别
+        // 实际应该根据token的列号来计算
+        return token.getColumn() / 4;
+    }
+
+
 
     private List<Expression> parseExpressionList() {
         List<Expression> expressions = new ArrayList<>();
@@ -254,6 +444,48 @@ public class Parser {
         }
 
         return expressions;
+    }
+
+
+    /**
+     * 检查标识符是否是类型名
+     */
+    private boolean isTypeName(String identifier) {
+        Set<String> typeNames = new HashSet<>();
+        typeNames.add("int");
+        typeNames.add("int8");
+        typeNames.add("byte");
+        typeNames.add("int16");
+        typeNames.add("short");
+        typeNames.add("int32");
+        typeNames.add("int64");
+        typeNames.add("long");
+        typeNames.add("double");
+        typeNames.add("float");
+        typeNames.add("bool");
+        typeNames.add("boolean");
+        typeNames.add("string");
+        typeNames.add("char");
+        typeNames.add("large");
+        return typeNames.contains(identifier);
+    }
+
+    /**
+     * 解析类型变量声明（如 int x, string name = "hello"）
+     */
+    private VariableDeclaration parseTypedVariableDeclaration() {
+        Token typeToken = advance(); // 消耗类型名
+        String typeName = typeToken.getLexeme();
+
+        String name = consume("IDENTIFIER", "Expect variable name after type").getLexeme();
+
+        Expression initializer = null;
+        if (match("EQUAL")) {
+            initializer = parseExpression();
+        }
+
+        return new VariableDeclaration(name, typeName, initializer,
+                typeToken.getLine(), typeToken.getColumn());
     }
 
     // 表达式解析（运算符优先级处理）
