@@ -9,7 +9,7 @@ import java.nio.file.*;
 import java.util.*;
 
 public class VastCLI {
-    static String ver = "0.1.0"; //VAST版本信息
+    static String ver = "0.1.1"; //版本信息
 
     public static void main(String[] args) {
         if (args.length == 0) {
@@ -576,4 +576,5 @@ public class VastCLI {
     private static void println() {
         System.out.println();
     }
+
 }
