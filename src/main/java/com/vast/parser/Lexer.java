@@ -1,5 +1,7 @@
 package com.vast.parser;
 
+import com.vast.internal.Debugger;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.HashMap;
@@ -16,6 +18,8 @@ public class Lexer {
 
     // 关键字映射
     private static final Map<String, String> KEYWORDS = new HashMap<>();
+
+    private final Debugger debugger = Debugger.getInstance();
 
     static {
         KEYWORDS.put("var", "VAR");
@@ -317,6 +321,6 @@ public class Lexer {
     }
 
     private void error(String message) {
-        System.err.println("[Lexer Error] Line " + line + ", Column " + column + ": " + message);
+        debugger.logError("Line " + line + ", Column " + column + ": " + message);
     }
 }

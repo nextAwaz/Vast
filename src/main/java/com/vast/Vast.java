@@ -1,5 +1,6 @@
 package com.vast;
 
+import com.vast.internal.Debugger;
 import com.vast.internal.exception.VastExceptions;
 import com.vast.vm.VastVM;
 
@@ -19,17 +20,18 @@ public class Vast {// Vast 脚本执行入口
             super(message, cause);
         }
     }
-    public static class Builder {
-        private boolean debug = false;
 
-        public Builder debug(boolean debug) {
-            this.debug = debug;
+    public static class Builder {
+        private Debugger.Level debugLevel = Debugger.Level.BASIC;
+
+        public Builder debugLevel(Debugger.Level level) {
+            this.debugLevel = level;
             return this;
         }
 
         public VastVM build() {
             VastVM vm = new VastVM();
-            vm.setDebugMode(debug);
+            vm.setDebugLevel(debugLevel);
             return vm;
         }
 
@@ -68,28 +70,49 @@ public class Vast {// Vast 脚本执行入口
         return new Builder();
     }
 
+    // 保留旧的 run 方法用于兼容性
     public static void run(String scriptPath) {
-        run(scriptPath, false);
+        run(scriptPath, Debugger.Level.BASIC);
     }
 
+    // 保留旧的 run 方法用于兼容性
     public static void run(String scriptPath, boolean debug) {
-        builder().debug(debug).run(scriptPath);
+        run(scriptPath, debug ? Debugger.Level.DETAIL : Debugger.Level.BASIC);
     }
 
+    // 新的 run 方法使用调试等级
+    public static void run(String scriptPath, Debugger.Level debugLevel) {
+        builder().debugLevel(debugLevel).run(scriptPath);
+    }
+
+    // 保留旧的 execute 方法用于兼容性
     public static void execute(String code) {
-        execute(code, false);
+        execute(code, Debugger.Level.BASIC);
     }
 
+    // 保留旧的 execute 方法用于兼容性
     public static void execute(String code, boolean debug) {
-        builder().debug(debug).execute(code);
+        execute(code, debug ? Debugger.Level.DETAIL : Debugger.Level.BASIC);
     }
 
+    // 新的 execute 方法使用调试等级
+    public static void execute(String code, Debugger.Level debugLevel) {
+        builder().debugLevel(debugLevel).execute(code);
+    }
+
+    // 保留旧的 runWithResult 方法用于兼容性
     public static Object runWithResult(String scriptPath) {
-        return runWithResult(scriptPath, false);
+        return runWithResult(scriptPath, Debugger.Level.BASIC);
     }
 
+    // 保留旧的 runWithResult 方法用于兼容性
     public static Object runWithResult(String scriptPath, boolean debug) {
-        return builder().debug(debug).runWithResult(scriptPath);
+        return runWithResult(scriptPath, debug ? Debugger.Level.DETAIL : Debugger.Level.BASIC);
+    }
+
+    // 新的 runWithResult 方法使用调试等级
+    public static Object runWithResult(String scriptPath, Debugger.Level debugLevel) {
+        return builder().debugLevel(debugLevel).runWithResult(scriptPath);
     }
 
     private static void validateScriptFile(String scriptPath) {

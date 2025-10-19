@@ -3,6 +3,7 @@ package com.vast.interpreter;
 import com.vast.ast.*;
 import com.vast.ast.expressions.*;
 import com.vast.ast.statements.*;
+import com.vast.internal.Debugger;
 import com.vast.registry.VastLibraryLoader;
 import com.vast.vm.VastVM;
 import com.vast.internal.exception.VastExceptions;
@@ -22,33 +23,25 @@ public class Interpreter implements ASTVisitor<Void> {
     private Object lastResult = null;
     private final Map<String, Class<?>> importedClasses = new HashMap<>();
     private final VastVM vm;
-
-    private boolean debugMode = false;
-
-    public void setDebugMode(boolean debug) {
-        this.debugMode = debug;
-    }
-
-    public Object getLastResult() {
-        return lastResult;
-    }
+    private final Debugger debugger;
 
     public Interpreter(VastVM vm) {
         this.vm = vm;
+        this.debugger = vm.getDebugger();
+
         // 复制已导入的类
         if (vm != null && vm.getImportedClasses() != null) {
             this.importedClasses.putAll(vm.getImportedClasses());
         }
 
-        // 明显的测试输出
-        System.out.println("@ [TYPE-CHECK] Type checking system INITIALIZED - Strict mode enabled");
+        debugger.logTypeCheck("Type checking system INITIALIZED - Strict mode enabled");
     }
 
     public void interpret(Program program) {
         try {
             program.accept(this);
         } catch (VastExceptions.VastRuntimeException error) {
-            System.err.println("Runtime error: " + error.getUserFriendlyMessage());
+            debugger.logError("Runtime error: " + error.getUserFriendlyMessage());
             throw error; // 重新抛出异常
         }
     }
@@ -79,9 +72,7 @@ public class Interpreter implements ASTVisitor<Void> {
         Object value = evaluate(expr.getValue());
         String varName = expr.getVariableName();
 
-        if (debugMode) {
-            System.out.println("@ [DEBUG] Assignment expression: " + varName + " = " + value);
-        }
+        debugger.logDetail("Assignment expression: " + varName + " = " + value);
 
         // 严格的类型检查
         if (variableTypes.containsKey(varName)) {
@@ -94,14 +85,10 @@ public class Interpreter implements ASTVisitor<Void> {
         return null;
     }
 
-    // 修复：返回类型改为 Void
     @Override
     public Void visitTypeCastExpression(TypeCastExpression expr) {
         // 类型转换表达式应该在 ExpressionEvaluator 中处理
-        // 这里只需要确保它被正确处理
-        if (debugMode) {
-            System.out.println("@ [TYPE-CAST] Type cast expression: " + expr);
-        }
+        debugger.logDetail("Type cast expression: " + expr);
         return null;
     }
 
@@ -120,7 +107,7 @@ public class Interpreter implements ASTVisitor<Void> {
         Object result = evaluate(expr);
         this.lastResult = result;
         if (result != null) {
-            System.out.println("@ Method call result: " + result);
+            debugger.logBasic("Method call result: " + result);
         }
         return null;
     }
@@ -136,82 +123,77 @@ public class Interpreter implements ASTVisitor<Void> {
         String varName = stmt.getVariableName();
         String typeHint = stmt.getTypeHint();
 
-        System.out.println("@ [VAR-DECL] Variable declaration: " + varName +
+        debugger.logVariable("Variable declaration: " + varName +
                 ", typeHint: " + typeHint + ", initial value: " + value);
 
         // 如果有类型提示，记录变量类型并严格验证初始值
         if (typeHint != null) {
             variableTypes.put(varName, typeHint);
-            System.out.println("@ [VAR-DECL] Registered type constraint: " + varName + " -> " + typeHint);
+            debugger.logTypeCheck("Registered type constraint: " + varName + " -> " + typeHint);
 
             // 严格验证初始值的类型
             if (value != null) {
                 validateTypeCompatibility(typeHint, value, varName,
                         stmt.getLineNumber(), stmt.getColumnNumber());
             } else {
-                System.out.println("@ [VAR-DECL] Null initial value for typed variable " + varName);
+                debugger.logVariable("Null initial value for typed variable " + varName);
             }
         }
 
         variables.put(varName, value);
         this.lastResult = value;
-        System.out.println("@ Var declared: " + varName + " = " + value +
+        debugger.logBasic("Var declared: " + varName + " = " + value +
                 (typeHint != null ? " (type: " + typeHint + ")" : ""));
         return null;
     }
-
 
     @Override
     public Void visitAssignmentStatement(AssignmentStatement stmt) {
         Object value = evaluate(stmt.getValue());
         String varName = stmt.getVariableName();
 
-        System.out.println("@ [TYPE-CHECK] Assignment: " + varName + " = " + value +
-                " (value type: " + getValueType(value) + ")");
+        debugger.logDetail("Assignment: " + varName + " = " + value + " (type: " + getValueType(value) + ")");
 
-        // 严格的类型检查 - 如果变量有类型约束
+        // 严格的类型检查
         if (variableTypes.containsKey(varName)) {
             String expectedType = variableTypes.get(varName);
-            System.out.println("@ [TYPE-CHECK] Variable '" + varName + "' has type constraint: " + expectedType);
+            debugger.logTypeCheck("Expected type: " + expectedType);
 
+            // 调用类型检查
             validateTypeCompatibility(expectedType, value, varName,
                     stmt.getLineNumber(), stmt.getColumnNumber());
-            System.out.println("@ [TYPE-CHECK] Type check PASSED for " + varName);
+            debugger.logTypeCheck("Type check PASSED");
         } else {
-            System.out.println("@ [TYPE-CHECK] No type constraint for " + varName + ", allowing assignment");
+            debugger.logTypeCheck("No type constraint for " + varName);
         }
 
         variables.put(varName, value);
         this.lastResult = value;
-        System.out.println("@ Var assigned: " + varName + " = " + value);
+        debugger.logBasic("Var assigned: " + varName + " = " + value);
         return null;
     }
-
 
     /**
      * 检查类型兼容性，不兼容时抛出异常
      */
-    private void validateTypeCompatibility(String expectedType, Object value, String varName,
-                                           int lineNumber, int columnNumber) {
+    private void validateTypeCompatibility(String expectedType, Object value, String varName, int lineNumber, int columnNumber) {
         if (value == null) {
-            System.out.println("@ [TYPE-CHECK] Null value allowed for any type");
+            debugger.logTypeCheck("Null value allowed for any type");
             return; // null 可以赋值给任何类型
         }
 
         String actualType = getValueType(value);
-        System.out.println("@ [TYPE-CHECK] Validating compatibility: " + expectedType + " <- " + actualType);
+        debugger.logTypeCheck("Validating: " + expectedType + " <- " + actualType);
 
         if (!isTypeCompatible(expectedType, value)) {
             String errorMsg = "Type mismatch: cannot assign " + actualType +
                     " to variable '" + varName + "' of type " + expectedType;
-            System.out.println("@ [TYPE-CHECK] ERROR: " + errorMsg);
-
-            // 直接抛出异常，不捕获
+            debugger.logTypeCheck(errorMsg);
             throw new VastExceptions.NotGrammarException(
                     errorMsg, lineNumber, columnNumber
             );
         }
-        System.out.println("@ [TYPE-CHECK] Type compatibility OK: " + expectedType + " <- " + actualType);
+        debugger.logTypeCheck("Type compatibility OK");
     }
 
     @Override
@@ -219,7 +201,7 @@ public class Interpreter implements ASTVisitor<Void> {
         Object result = evaluate(stmt.getExpression());
         this.lastResult = result;
         if (result != null) {
-            System.out.println("@ Expression result: " + result);
+            debugger.logBasic("Expression result: " + result);
         }
         return null;
     }
@@ -227,7 +209,7 @@ public class Interpreter implements ASTVisitor<Void> {
     @Override
     public Void visitImportStatement(ImportStatement stmt) {
         String importPath = stmt.getClassName();
-        System.out.println("@ Import: " + importPath);
+        debugger.logBasic("Import: " + importPath);
 
         try {
             // 首先尝试作为外置库导入
@@ -235,7 +217,7 @@ public class Interpreter implements ASTVisitor<Void> {
             boolean libraryLoaded = loader.loadLibraryFromImport(importPath, this.vm);
 
             if (libraryLoaded) {
-                System.out.printf("@ External library loaded: %s%n", importPath);
+                debugger.logBasic("External library loaded: " + importPath);
                 return null;
             }
 
@@ -248,14 +230,14 @@ public class Interpreter implements ASTVisitor<Void> {
                 vm.getImportedClasses().put(importPath, clazz);
             }
 
-            System.out.printf("@ Class imported: %s%n", importPath);
+            debugger.logBasic("Class imported: " + importPath);
 
         } catch (ClassNotFoundException e) {
             // 静默处理类未找到异常，不抛出错误
-            System.out.printf("@ Class not found: %s%n", importPath);
+            debugger.logBasic("Class not found: " + importPath);
         } catch (Exception e) {
             // 静默处理其他异常
-            System.out.printf("@ Import failed: %s%n", importPath);
+            debugger.logBasic("Import failed: " + importPath);
         }
         return null;
     }
@@ -264,23 +246,17 @@ public class Interpreter implements ASTVisitor<Void> {
     public Void visitLoopStatement(LoopStatement stmt) {
         Object condition = evaluate(stmt.getCondition());
 
-        if (debugMode) {
-            System.out.println("@ Loop condition: " + condition + " (type: " +
-                    (condition != null ? condition.getClass().getSimpleName() : "null") + ")");
-        }
+        debugger.logDetail("Loop condition: " + condition + " (type: " +
+                (condition != null ? condition.getClass().getSimpleName() : "null") + ")");
 
         // 处理数字类型的循环条件（如 loop(10):）
         if (condition instanceof Number) {
             int count = ((Number) condition).intValue();
 
-            if (debugMode) {
-                System.out.println("@ Loop count: " + count);
-            }
+            debugger.logDetail("Loop count: " + count);
 
             for (int i = 0; i < count; i++) {
-                if (debugMode) {
-                    System.out.println("@ Loop iteration: " + (i + 1) + "/" + count);
-                }
+                debugger.logDetail("Loop iteration: " + (i + 1) + "/" + count);
 
                 // 执行循环体中的所有语句
                 for (Statement bodyStmt : stmt.getBody()) {
@@ -291,31 +267,23 @@ public class Interpreter implements ASTVisitor<Void> {
         // 处理布尔类型的循环条件（如 loop(true): 或 loop(a > b):）
         else if (condition instanceof Boolean) {
             if ((Boolean) condition) {
-                if (debugMode) {
-                    System.out.println("@ Boolean condition is true, executing loop body");
-                }
+                debugger.logDetail("Boolean condition is true, executing loop body");
                 for (Statement bodyStmt : stmt.getBody()) {
                     bodyStmt.accept(this);
                 }
             } else {
-                if (debugMode) {
-                    System.out.println("@ Boolean condition is false, skipping loop");
-                }
+                debugger.logDetail("Boolean condition is false, skipping loop");
             }
         }
         else {
             // 默认情况下，如果条件不是数字或布尔值，当作真值处理并执行一次
             if (condition != null) {
-                if (debugMode) {
-                    System.out.println("@ Non-boolean condition, executing loop body once");
-                }
+                debugger.logDetail("Non-boolean condition, executing loop body once");
                 for (Statement bodyStmt : stmt.getBody()) {
                     bodyStmt.accept(this);
                 }
             } else {
-                if (debugMode) {
-                    System.out.println("@ Null condition, skipping loop");
-                }
+                debugger.logDetail("Null condition, skipping loop");
             }
         }
         return null;
@@ -324,14 +292,14 @@ public class Interpreter implements ASTVisitor<Void> {
     @Override
     public Void visitGiveStatement(GiveStatement stmt) {
         String className = stmt.getTarget().getName();
-        System.out.println("@ Give: " + className + " with " + stmt.getVariables().size() + " variables");
+        debugger.logBasic("Give: " + className + " with " + stmt.getVariables().size() + " variables");
 
         for (Expression varExpr : stmt.getVariables()) {
             if (varExpr instanceof VariableExpression) {
                 String varName = ((VariableExpression) varExpr).getName();
                 if (variables.containsKey(varName)) {
                     Object value = variables.get(varName);
-                    System.out.println("  Variable " + varName + ": " + value);
+                    debugger.logBasic("  Variable " + varName + ": " + value);
                 } else {
                     throw VastExceptions.NonExistentObject.variableNotFound(varName);
                 }
@@ -345,19 +313,19 @@ public class Interpreter implements ASTVisitor<Void> {
         String className = stmt.getClassName().getName();
         String methodName = stmt.getMethodName().getName();
 
-        System.out.println("@ Do: " + className + "." + methodName + "() with " + stmt.getArguments().size() + " arguments");
+        debugger.logBasic("Do: " + className + "." + methodName + "() with " + stmt.getArguments().size() + " arguments");
 
         Object[] args = new Object[stmt.getArguments().size()];
         for (int i = 0; i < stmt.getArguments().size(); i++) {
             args[i] = evaluate(stmt.getArguments().get(i));
-            System.out.println("  Arg " + i + ": " + args[i]);
+            debugger.logBasic("  Arg " + i + ": " + args[i]);
         }
 
         Object result = callInternalMethod(className, methodName, args);
         this.lastResult = result;
 
         if (result != null) {
-            System.out.println("@ Do result: " + result);
+            debugger.logBasic("Do result: " + result);
         }
 
         return null;
@@ -368,7 +336,7 @@ public class Interpreter implements ASTVisitor<Void> {
         String varA = stmt.getVarA().getName();
         String varB = stmt.getVarB().getName();
 
-        System.out.println("@ Swap: " + varA + " <-> " + varB);
+        debugger.logBasic("Swap: " + varA + " <-> " + varB);
 
         if (!variables.containsKey(varA)) {
             throw VastExceptions.NonExistentObject.variableNotFound(varA);
@@ -383,7 +351,7 @@ public class Interpreter implements ASTVisitor<Void> {
         variables.put(varA, valueB);
         variables.put(varB, valueA);
 
-        System.out.println("@ Swapped: " + varA + " = " + variables.get(varA) + ", " + varB + " = " + variables.get(varB));
+        debugger.logBasic("Swapped: " + varA + " = " + variables.get(varA) + ", " + varB + " = " + variables.get(varB));
         return null;
     }
 
@@ -649,24 +617,19 @@ public class Interpreter implements ASTVisitor<Void> {
             return Interpreter.this.callInternalMethod(className, methodName, args);
         }
 
-        // 修复：添加 TypeCastExpression 的求值方法
         @Override
         public Object visitTypeCastExpression(TypeCastExpression expr) {
             Object value = evaluate(expr.getExpression());
             String targetType = expr.getTargetType();
 
-            if (Interpreter.this.debugMode) {
-                System.out.println("@ [TYPE-CAST-EVAL] Casting " + value + " (" + getValueType(value) +
-                        ") to " + targetType);
-            }
+            debugger.logDetail("Casting " + value + " (" + getValueType(value) +
+                    ") to " + targetType);
 
             Object result = Interpreter.this.performTypeCast(value, targetType,
                     expr.getLineNumber(), expr.getColumnNumber(),
                     expr.isExplicit());
 
-            if (Interpreter.this.debugMode) {
-                System.out.println("@ [TYPE-CAST-EVAL] Result: " + result + " (" + getValueType(result) + ")");
-            }
+            debugger.logDetail("Result: " + result + " (" + getValueType(result) + ")");
 
             return result;
         }
@@ -759,19 +722,19 @@ public class Interpreter implements ASTVisitor<Void> {
             Object value = evaluate(expr.getValue());
             String varName = expr.getVariableName();
 
-            System.out.println("@ [EXPR-ASSIGN] Assignment expression: " + varName + " = " + value +
+            debugger.logDetail("Assignment expression: " + varName + " = " + value +
                     " (value type: " + getValueType(value) + ")");
 
             // 严格的类型检查
             if (Interpreter.this.variableTypes.containsKey(varName)) {
                 String expectedType = Interpreter.this.variableTypes.get(varName);
-                System.out.println("@ [EXPR-ASSIGN] Variable '" + varName + "' has type constraint: " + expectedType);
+                debugger.logDetail("Variable '" + varName + "' has type constraint: " + expectedType);
 
                 Interpreter.this.validateTypeCompatibility(expectedType, value, varName,
                         expr.getLineNumber(), expr.getColumnNumber());
-                System.out.println("@ [EXPR-ASSIGN] Type check PASSED for " + varName);
+                debugger.logDetail("Type check PASSED for " + varName);
             } else {
-                System.out.println("@ [EXPR-ASSIGN] No type constraint for " + varName + ", allowing assignment");
+                debugger.logDetail("No type constraint for " + varName + ", allowing assignment");
             }
 
             variables.put(varName, value);
@@ -1025,7 +988,7 @@ public class Interpreter implements ASTVisitor<Void> {
                 default:
                     // 未知类型，返回原值
                     if (!isExplicit) {
-                        System.out.println("@ [WARNING] Unknown target type: " + targetType);
+                        debugger.logWarning("Unknown target type: " + targetType);
                     }
                     return value;
             }
@@ -1056,7 +1019,7 @@ public class Interpreter implements ASTVisitor<Void> {
                     // 尝试解析为浮点数然后取整
                     double d = Double.parseDouble(str);
                     if (!isExplicit) {
-                        System.out.println("@ [WARNING] Losing precision in implicit cast: " + str + " -> " + (int)d);
+                        debugger.logWarning("Losing precision in implicit cast: " + str + " -> " + (int)d);
                     }
                     return (int) d;
                 } catch (NumberFormatException e2) {
@@ -1186,5 +1149,9 @@ public class Interpreter implements ASTVisitor<Void> {
         public String toString() {
             return className + "." + methodName;
         }
+    }
+
+    public Object getLastResult() {
+        return lastResult;
     }
 }

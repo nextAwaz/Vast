@@ -1,5 +1,6 @@
 package com.vast;
 
+import com.vast.internal.Debugger;
 import com.vast.registry.VastExternalLibrary;
 import com.vast.registry.VastLibraryRegistry;
 
@@ -60,19 +61,41 @@ public class VastCLI {
 
     private static void handleRunCommand(String[] args) {
         if (args.length < 2) {
-            println("Usage: run <script.vast> [--debug]");
+            println("Usage: run <script.vast> [--debug-level=basic|detail|base]");
             return;
         }
 
         String scriptPath = args[1];
-        boolean debug = Arrays.asList(args).contains("--debug");
+        Debugger.Level debugLevel = Debugger.Level.BASIC;
+
+        // 解析调试等级参数
+        for (String arg : args) {
+            if (arg.startsWith("--debug-level=")) {
+                String levelStr = arg.substring("--debug-level=".length()).toLowerCase();
+                switch (levelStr) {
+                    case "detail":
+                        debugLevel = Debugger.Level.DETAIL;
+                        break;
+                    case "base":
+                        debugLevel = Debugger.Level.BASE;
+                        break;
+                    case "basic":
+                    default:
+                        debugLevel = Debugger.Level.BASIC;
+                        break;
+                }
+            }
+        }
 
         long startTime = System.currentTimeMillis();
         try {
             println("@ Running VastScript: " + scriptPath);
+            if (debugLevel != Debugger.Level.BASIC) {
+                println("@ Debug level: " + debugLevel);
+            }
             println("=".repeat(50));
 
-            Vast.run(scriptPath, debug);
+            Vast.run(scriptPath, debugLevel);
 
             long endTime = System.currentTimeMillis();
             println("=".repeat(50));
@@ -80,7 +103,7 @@ public class VastCLI {
 
         } catch (Vast.VastException e) {
             System.err.println("[FAILURE] Script execution failed: " + e.getMessage());
-            if (debug) {
+            if (debugLevel == Debugger.Level.BASE) {
                 e.printStackTrace();
             }
         }
@@ -232,22 +255,43 @@ public class VastCLI {
 
     private static void handleEvalCommand(String[] args) {
         if (args.length < 2) {
-            println("Usage: eval \"code\"");
+            println("Usage: eval \"code\" [--debug-level=basic|detail|base]");
             return;
         }
 
-        // 合并所有参数作为代码
+        // 解析调试等级参数
+        Debugger.Level debugLevel = Debugger.Level.BASIC;
         StringBuilder code = new StringBuilder();
+
         for (int i = 1; i < args.length; i++) {
-            if (i > 1) code.append(" ");
-            code.append(args[i]);
+            if (args[i].startsWith("--debug-level=")) {
+                String levelStr = args[i].substring("--debug-level=".length()).toLowerCase();
+                switch (levelStr) {
+                    case "detail":
+                        debugLevel = Debugger.Level.DETAIL;
+                        break;
+                    case "base":
+                        debugLevel = Debugger.Level.BASE;
+                        break;
+                    case "basic":
+                    default:
+                        debugLevel = Debugger.Level.BASIC;
+                        break;
+                }
+            } else {
+                if (code.length() > 0) code.append(" ");
+                code.append(args[i]);
+            }
         }
 
         try {
             println("@ Evaluating: " + code);
-            Vast.execute(code.toString());
+            Vast.execute(code.toString(), debugLevel);
         } catch (Vast.VastException e) {
             System.err.println("@ Evaluation failed: " + e.getMessage());
+            if (debugLevel == Debugger.Level.BASE) {
+                e.printStackTrace();
+            }
         }
     }
 
@@ -255,9 +299,12 @@ public class VastCLI {
         println("@ VastScript Interactive Shell");
         println("Type 'exit' or 'quit' to exit");
         println("Type 'clear' to clear screen");
+        println("Type 'debug basic|detail|base' to change debug level");
         println("=".repeat(50));
 
         Scanner scanner = new Scanner(System.in);
+        Debugger.Level debugLevel = Debugger.Level.BASIC;
+
         while (true) {
             System.out.print("vast> ");
             String input = scanner.nextLine().trim();
@@ -275,10 +322,37 @@ public class VastCLI {
                 continue;
             }
 
+            // 处理调试等级设置
+            if (input.startsWith("debug ")) {
+                String levelStr = input.substring(6).toLowerCase();
+                switch (levelStr) {
+                    case "detail":
+                        debugLevel = Debugger.Level.DETAIL;
+                        println("@ Debug level set to: DETAIL");
+                        break;
+                    case "base":
+                        debugLevel = Debugger.Level.BASE;
+                        println("@ Debug level set to: BASE");
+                        break;
+                    case "basic":
+                        debugLevel = Debugger.Level.BASIC;
+                        println("@ Debug level set to: BASIC");
+                        break;
+                    default:
+                        println("@ Unknown debug level: " + levelStr);
+                        println("@ Available levels: basic, detail, base");
+                        break;
+                }
+                continue;
+            }
+
             try {
-                Vast.execute(input);
+                Vast.execute(input, debugLevel);
             } catch (Vast.VastException e) {
                 System.err.println("Error: " + e.getMessage());
+                if (debugLevel == Debugger.Level.BASE) {
+                    e.printStackTrace();
+                }
             }
         }
 
@@ -426,7 +500,7 @@ public class VastCLI {
         println("Usage: vast <command> [arguments]");
         println();
         println("Commands:");
-        println("  run <script.vast> [--debug]    Execute a script file");
+        println("  run <script.vast> [--debug-mode=[level]]    Execute a script file");
         println("  eval \"code\"         Execute code directly");
         println("  shell                Start interactive shell");
         println("  help [topic]         Show help information");
@@ -455,6 +529,7 @@ public class VastCLI {
         println("Shell Commands:");
         println("  exit, quit  - Exit shell");
         println("  clear       - Clear screen");
+        println("  debug level - Set debug level (basic|detail|base)");
         println();
         println("You can type any VastScript code directly:");
         println("  var x = 10");

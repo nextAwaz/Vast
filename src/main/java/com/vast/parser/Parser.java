@@ -3,6 +3,7 @@ package com.vast.parser;
 import com.vast.ast.*;
 import com.vast.ast.expressions.*;
 import com.vast.ast.statements.*;
+import com.vast.internal.Debugger;
 
 import java.util.HashSet;
 import java.util.List;
@@ -18,11 +19,14 @@ public class Parser {
         this.tokens = tokens;
     }
 
+    private final Debugger debugger = Debugger.getInstance();
+
     /**
      * 解析整个程序
      */
     public Program parseProgram() {
         List<Statement> statements = new ArrayList<>();
+        debugger.logParser("Starting program parsing");
 
         while (!isAtEnd()) {
             // 跳过换行符
@@ -41,6 +45,7 @@ public class Parser {
             match("NEWLINE");
         }
 
+        debugger.logAST("Program parsed successfully with " + statements.size() + " statements");
         return new Program(statements);
     }
 

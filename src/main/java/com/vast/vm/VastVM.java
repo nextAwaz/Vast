@@ -1,6 +1,7 @@
 package com.vast.vm;
 
 import com.vast.ast.Program;
+import com.vast.internal.Debugger;
 import com.vast.internal.Input;
 import com.vast.internal.exception.VastExceptions;
 import com.vast.parser.Lexer;
@@ -29,7 +30,10 @@ public class VastVM {//Vast 虚拟机核心类
 
     // 对于外置库的支持
     private final VastLibraryLoader libraryLoader;
-    private final VastLibraryRegistry libraryRegistry; // 添加缺失的字段
+    private final VastLibraryRegistry libraryRegistry;
+
+    // 调试器
+    private final Debugger debugger;
 
     static {
         // 注册内置类
@@ -55,17 +59,27 @@ public class VastVM {//Vast 虚拟机核心类
         // 扫描并加载可用库
         this.libraryLoader.scanAndLoadAvailableLibraries(this);
 
+        this.debugger = Debugger.getInstance();
+
         // 初始化全局变量
         initializeGlobalVariables();
+    }
+    public void setDebugLevel(Debugger.Level level) {
+        debugger.setLevel(level);
+        if (level != Debugger.Level.BASIC) {
+            debugger.logBasic("Debug mode enabled: " + level);
+        }
+    }
+
+    public Debugger getDebugger() {
+        return debugger;
     }
 
     public static void registerClass(String className, Class<?> clazz) {
         BUILTIN_CLASSES.put(className, clazz);
     }
 
-    public void setDebugMode(boolean debug) {
-        this.debugMode = debug;
-    }
+
 
     public Map<String, Class<?>> getImportedClasses() {
         return importedClasses;
