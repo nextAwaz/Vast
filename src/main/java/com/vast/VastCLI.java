@@ -507,6 +507,7 @@ public class VastCLI {
         println("  version              Show version info");
         println("  list                 List built-in features");
         println("  info <script.vast>   Show script statistics");
+        println("  lib <command>        Manage external libraries");
         println();
         println("Examples:");
         println("  vast run script.vast");
@@ -545,8 +546,8 @@ public class VastCLI {
         println("var (int) y = 20           # Typed variable");
         println("loop(5):                   # Loop 5 times");
         println("    var z = x + y          # Indented block");
-        println("swap(a)(b)                 # Swap variables");
-        println("give(Class)(var1, var2)    # Give variables to class");
+        println("swap(a, b)                 # Swap variables");
+        println("use(ClassName.method(args)) # Use method");
     }
 
     private static void printBuiltinsHelp() {
@@ -560,12 +561,11 @@ public class VastCLI {
         println("  var x = 10");
         println("  var y = 20");
         println("  var z = x + y");
-        println("  swap(x)(y)");
+        println("  swap(x, y)");
         println();
-        println("Loop:");
-        println("  loop(3):");
-        println("      var i = _index");
-        println("      # loop body");
+        println("Method Call:");
+        println("  use(Sys.print(\"Hello\"))");
+        println("  use(Time.wait(1000))");
     }
 
     // 大道至简

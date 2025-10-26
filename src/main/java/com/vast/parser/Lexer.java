@@ -8,7 +8,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 //词法分析器
-public class Lexer {
+public class    Lexer {
     private final String source;
     private final List<Token> tokens = new ArrayList<>();
     private int start = 0;
@@ -25,8 +25,7 @@ public class Lexer {
         KEYWORDS.put("var", "VAR");
         KEYWORDS.put("imp", "IMPORT");
         KEYWORDS.put("loop", "LOOP");
-        KEYWORDS.put("give", "GIVE");
-        KEYWORDS.put("do", "DO");
+        KEYWORDS.put("use", "USE");
         KEYWORDS.put("swap", "SWAP");
         KEYWORDS.put("true", "TRUE");
         KEYWORDS.put("false", "FALSE");
@@ -117,20 +116,30 @@ public class Lexer {
                     addToken("GREATER");
                 }
                 break;
-            case '&':
-                if (match('&')) {
-                    addToken("AND");
-                } else {
-                    // 单个 & 不是有效运算符
-                    error("Unexpected character: '&'");
-                }
-                break;
             case '|':
                 if (match('|')) {
-                    addToken("OR");
+                    addToken("OR");  // 逻辑或
                 } else {
-                    // 单个 | 不是有效运算符
-                    error("Unexpected character: '|'");
+                    addToken("BITWISE_OR");  // 按位或
+                }
+                break;
+
+            case '&':
+                if (match('&')) {
+                    addToken("AND");  // 逻辑与
+                } else {
+                    addToken("BITWISE_AND");  // 按位与
+                }
+                break;
+
+            case '^': addToken("BITWISE_XOR"); break;  // 按位异或
+            case '~': addToken("BITWISE_NOT"); break;  // 按位取反
+
+            case '$':
+                if (match('$')) {
+                    addToken("DOUBLE_DOLLAR");  // 永久分数修饰符
+                } else {
+                    addToken("DOLLAR");  // 单步分数修饰符
                 }
                 break;
 

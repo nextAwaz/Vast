@@ -73,11 +73,8 @@ public class Parser {
         if (match("LOOP")) {
             return parseLoopStatement();
         }
-        if (match("GIVE")) {
-            return parseGiveStatement();
-        }
-        if (match("DO")) {
-            return parseDoStatement();
+        if (match("USE")) {
+            return parseUseStatement();
         }
         if (match("SWAP")) {
             return parseSwapStatement();
@@ -243,53 +240,17 @@ public class Parser {
         return token.getColumn() > 1;
     }
 
-    private Statement parseGiveStatement() {
-        Token giveToken = previous();
-        consume("LEFT_PAREN", "Expect '(' after 'give'");
+    private Statement parseUseStatement() {
+        Token useToken = previous();
+        consume("LEFT_PAREN", "Expect '(' after 'use'");
 
-        Expression target = parseExpression();
-        if (!(target instanceof VariableExpression)) {
-            throw error(peek(), "Give target must be a class name");
-        }
+        // 解析方法调用表达式（如：ClassName.methodName(args)）
+        Expression methodCall = parseExpression();
 
-        consume("RIGHT_PAREN", "Expect ')' after give target");
-        consume("LEFT_PAREN", "Expect '(' for variables");
+        consume("RIGHT_PAREN", "Expect ')' after method call");
 
-        List<Expression> variables = parseExpressionList();
-        consume("RIGHT_PAREN", "Expect ')' after variables");
-
-        return new GiveStatement((VariableExpression) target, variables,
-                giveToken.getLine(), giveToken.getColumn());
-    }
-
-    private Statement parseDoStatement() {
-        Token doToken = previous();
-        consume("LEFT_PAREN", "Expect '(' after 'do'");
-
-        Expression classNameExpr = parseExpression();
-        if (!(classNameExpr instanceof VariableExpression)) {
-            throw error(peek(), "Do class name must be an identifier");
-        }
-
-        consume("RIGHT_PAREN", "Expect ')' after class name");
-        consume("LEFT_PAREN", "Expect '(' for method name");
-
-        Expression methodNameExpr = parseExpression();
-        if (!(methodNameExpr instanceof VariableExpression)) {
-            throw error(peek(), "Do method name must be an identifier");
-        }
-
-        consume("RIGHT_PAREN", "Expect ')' after method name");
-
-        List<Expression> arguments = new ArrayList<>();
-        if (match("LEFT_PAREN")) {
-            arguments = parseExpressionList();
-            consume("RIGHT_PAREN", "Expect ')' after arguments");
-        }
-
-        return new DoStatement((VariableExpression) classNameExpr,
-                (VariableExpression) methodNameExpr, arguments,
-                doToken.getLine(), doToken.getColumn());
+        // 使用新的构造函数
+        return new UseStatement(methodCall, useToken.getLine(), useToken.getColumn());
     }
 
     private Statement parseSwapStatement() {
@@ -301,15 +262,14 @@ public class Parser {
             throw error(peek(), "Swap operand must be a variable");
         }
 
-        consume("RIGHT_PAREN", "Expect ')' after first variable");
-        consume("LEFT_PAREN", "Expect '(' for second variable");
+        consume("COMMA", "Expect ',' between swap variables");
 
         Expression varB = parseExpression();
         if (!(varB instanceof VariableExpression)) {
             throw error(peek(), "Swap operand must be a variable");
         }
 
-        consume("RIGHT_PAREN", "Expect ')' after second variable");
+        consume("RIGHT_PAREN", "Expect ')' after swap variables");
 
         return new SwapStatement((VariableExpression) varA, (VariableExpression) varB,
                 swapToken.getLine(), swapToken.getColumn());
@@ -517,6 +477,46 @@ public class Parser {
         return expr;
     }
 
+    //按位或运算
+    private Expression parseBitwiseOr() {
+        Expression expr = parseBitwiseXor();
+
+        while (match("BITWISE_OR")) {
+            Token operator = previous();
+            Expression right = parseBitwiseXor();
+            expr = new BitwiseExpression(expr, "|", right,
+                    operator.getLine(), operator.getColumn());
+        }
+
+        return expr;
+    }
+    //按位异或运算
+    private Expression parseBitwiseXor() {
+        Expression expr = parseBitwiseAnd();
+
+        while (match("BITWISE_XOR")) {
+            Token operator = previous();
+            Expression right = parseBitwiseAnd();
+            expr = new BitwiseExpression(expr, "^", right,
+                    operator.getLine(), operator.getColumn());
+        }
+
+        return expr;
+    }
+    //按位与运算
+    private Expression parseBitwiseAnd() {
+        Expression expr = parseEquality();
+
+        while (match("BITWISE_AND")) {
+            Token operator = previous();
+            Expression right = parseEquality();
+            expr = new BitwiseExpression(expr, "&", right,
+                    operator.getLine(), operator.getColumn());
+        }
+
+        return expr;
+    }
+
     private Expression parseLogicalOr() {
         Expression expr = parseLogicalAnd();
 
@@ -609,7 +609,25 @@ public class Parser {
     }
 
     private Expression parseUnary() {
-        if (match("BANG", "MINUS", "PLUS_PLUS")) {
+        // 处理分数修饰符
+        if (match("DOLLAR", "DOUBLE_DOLLAR")) {
+            Token operator = previous();
+            boolean isPermanent = operator.getType().equals("DOUBLE_DOLLAR");
+
+            // 必须紧跟左括号
+            if (!match("LEFT_PAREN")) {
+                throw error(peek(), "Fraction modifier must be followed by parenthesized expression");
+            }
+
+            Expression expr = parseExpression();
+            consume("RIGHT_PAREN", "Expect ')' after fraction expression");
+
+            return new FractionExpression(expr, isPermanent,
+                    operator.getLine(), operator.getColumn());
+        }
+
+        // 处理按位取反和其他一元运算符
+        if (match("BANG", "MINUS", "PLUS_PLUS", "BITWISE_NOT")) {
             Token operator = previous();
             Expression right = parseUnary();
             return new UnaryExpression(operator.getLexeme(), right,

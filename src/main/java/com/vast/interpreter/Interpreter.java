@@ -4,6 +4,7 @@ import com.vast.ast.*;
 import com.vast.ast.expressions.*;
 import com.vast.ast.statements.*;
 import com.vast.internal.Debugger;
+import com.vast.internal.Fraction;
 import com.vast.registry.VastLibraryLoader;
 import com.vast.vm.VastVM;
 import com.vast.internal.exception.VastExceptions;
@@ -24,6 +25,8 @@ public class Interpreter implements ASTVisitor<Void> {
     private final Map<String, Class<?>> importedClasses = new HashMap<>();
     private final VastVM vm;
     private final Debugger debugger;
+    private final Map<String, String> staticMethodToClass = new HashMap<>();//静态方法名到类名的映射
+    private final Map<String, Set<String>> methodConflicts = new HashMap<>();//方法名冲突记录
 
     public Interpreter(VastVM vm) {
         this.vm = vm;
@@ -34,7 +37,78 @@ public class Interpreter implements ASTVisitor<Void> {
             this.importedClasses.putAll(vm.getImportedClasses());
         }
 
+        initializeStaticMethodMapping();//初始化静态方法映射
         debugger.logTypeCheck("Type checking system INITIALIZED - Strict mode enabled");
+        debugger.logDetail("Static method mapping initialized with " + staticMethodToClass.size() + " unique methods");
+
+        debugger.logTypeCheck("Type checking system INITIALIZED - Strict mode enabled");
+    }
+
+    /**
+     * 初始化静态方法映射，检查方法名冲突
+     */
+    private void initializeStaticMethodMapping() {
+        // 收集所有类的静态方法
+        Map<String, Set<String>> methodToClasses = new HashMap<>();
+
+        // 1. 内置类的静态方法
+        for (Map.Entry<String, Class<?>> entry : VastVM.getBuiltinClasses().entrySet()) {
+            collectStaticMethods(entry.getKey(), entry.getValue(), methodToClasses);
+        }
+
+        // 2. 已导入类的静态方法
+        for (Map.Entry<String, Class<?>> entry : importedClasses.entrySet()) {
+            collectStaticMethods(entry.getKey(), entry.getValue(), methodToClasses);
+        }
+
+        // 构建唯一方法名映射并记录冲突
+        for (Map.Entry<String, Set<String>> entry : methodToClasses.entrySet()) {
+            String methodName = entry.getKey();
+            Set<String> classes = entry.getValue();
+
+            if (classes.size() == 1) {
+                // 方法名唯一，添加到映射
+                staticMethodToClass.put(methodName, classes.iterator().next());
+                debugger.logDetail("Static method '" + methodName + "' uniquely mapped to class: " + classes.iterator().next());
+            } else {
+                // 方法名冲突，记录冲突信息
+                methodConflicts.put(methodName, classes);
+                debugger.logWarning("Method name conflict: '" + methodName + "' exists in multiple classes: " + classes);
+            }
+        }
+    }
+
+    /**
+     * 收集类的静态方法
+     */
+    private void collectStaticMethods(String className, Class<?> clazz, Map<String, Set<String>> methodToClasses) {
+        try {
+            java.lang.reflect.Method[] methods = clazz.getMethods();
+            for (java.lang.reflect.Method method : methods) {
+                if (java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+                    String methodName = method.getName();
+                    methodToClasses.computeIfAbsent(methodName, k -> new HashSet<>()).add(className);
+                }
+            }
+        } catch (Exception e) {
+            debugger.logWarning("Failed to collect static methods from class: " + className);
+        }
+    }
+
+    /**
+     * 检查方法名是否唯一
+     */
+    private String resolveClassNameForMethod(String methodName, int lineNumber, int columnNumber) {
+        if (staticMethodToClass.containsKey(methodName)) {
+            return staticMethodToClass.get(methodName);
+        }
+
+        if (methodConflicts.containsKey(methodName)) {
+            throw VastExceptions.AmbiguousReferenceException.forMethod(
+                    methodName, methodConflicts.get(methodName), lineNumber, columnNumber);
+        }
+
+        return null; // 方法不存在
     }
 
     public void interpret(Program program) {
@@ -86,9 +160,19 @@ public class Interpreter implements ASTVisitor<Void> {
     }
 
     @Override
-    public Void visitTypeCastExpression(TypeCastExpression expr) {
-        // 类型转换表达式应该在 ExpressionEvaluator 中处理
-        debugger.logDetail("Type cast expression: " + expr);
+    public Void visitBitwiseExpression(BitwiseExpression expr) {
+        // 按位表达式应该在 ExpressionEvaluator 中处理
+        debugger.logDetail("Bitwise expression: " + expr);
+        return null;
+    }
+
+    @Override
+    public Void visitFractionExpression(FractionExpression expr) {
+        Object result = evaluate(expr);
+        this.lastResult = result;
+        if (result != null) {
+            debugger.logBasic("Fraction expression result: " + result);
+        }
         return null;
     }
 
@@ -290,42 +374,17 @@ public class Interpreter implements ASTVisitor<Void> {
     }
 
     @Override
-    public Void visitGiveStatement(GiveStatement stmt) {
-        String className = stmt.getTarget().getName();
-        debugger.logBasic("Give: " + className + " with " + stmt.getVariables().size() + " variables");
+    public Void visitUseStatement(UseStatement stmt) {
+        Expression methodCall = stmt.getMethodCall();
 
-        for (Expression varExpr : stmt.getVariables()) {
-            if (varExpr instanceof VariableExpression) {
-                String varName = ((VariableExpression) varExpr).getName();
-                if (variables.containsKey(varName)) {
-                    Object value = variables.get(varName);
-                    debugger.logBasic("  Variable " + varName + ": " + value);
-                } else {
-                    throw VastExceptions.NonExistentObject.variableNotFound(varName);
-                }
-            }
-        }
-        return null;
-    }
+        debugger.logBasic("Use statement executing method call");
 
-    @Override
-    public Void visitDoStatement(DoStatement stmt) {
-        String className = stmt.getClassName().getName();
-        String methodName = stmt.getMethodName().getName();
-
-        debugger.logBasic("Do: " + className + "." + methodName + "() with " + stmt.getArguments().size() + " arguments");
-
-        Object[] args = new Object[stmt.getArguments().size()];
-        for (int i = 0; i < stmt.getArguments().size(); i++) {
-            args[i] = evaluate(stmt.getArguments().get(i));
-            debugger.logBasic("  Arg " + i + ": " + args[i]);
-        }
-
-        Object result = callInternalMethod(className, methodName, args);
+        // 直接执行方法调用表达式
+        Object result = evaluate(methodCall);
         this.lastResult = result;
 
         if (result != null) {
-            debugger.logBasic("Do result: " + result);
+            debugger.logBasic("Use statement result: " + result);
         }
 
         return null;
@@ -336,7 +395,7 @@ public class Interpreter implements ASTVisitor<Void> {
         String varA = stmt.getVarA().getName();
         String varB = stmt.getVarB().getName();
 
-        debugger.logBasic("Swap: " + varA + " <-> " + varB);
+        debugger.logBasic("Swap: " + varA + ", " + varB);
 
         if (!variables.containsKey(varA)) {
             throw VastExceptions.NonExistentObject.variableNotFound(varA);
@@ -360,6 +419,9 @@ public class Interpreter implements ASTVisitor<Void> {
      */
     private Object callInternalMethod(String className, String methodName, Object[] args) {
         try {
+            debugger.logDetail("Calling internal method: " + className + "." + methodName +
+                    " with " + args.length + " arguments");
+
             Class<?> clazz = findClass(className);
             if (clazz == null) {
                 throw VastExceptions.NonExistentObject.classNotFound(className);
@@ -370,7 +432,9 @@ public class Interpreter implements ASTVisitor<Void> {
                 throw VastExceptions.NonExistentObject.methodNotFound(className, methodName);
             }
 
-            return method.invoke(null, args);
+            Object result = method.invoke(null, args);
+            debugger.logDetail("Method call result: " + result);
+            return result;
 
         } catch (VastExceptions.VastRuntimeException e) {
             throw e;
@@ -526,6 +590,16 @@ public class Interpreter implements ASTVisitor<Void> {
         return expr.accept(new ExpressionEvaluator());
     }
 
+    @Override
+    public Void visitTypeCastExpression(TypeCastExpression expr) {
+        Object result = evaluate(expr);
+        this.lastResult = result;
+        if (result != null) {
+            debugger.logBasic("Type cast expression result: " + result);
+        }
+        return null;
+    }
+
     /**
      * 表达式求值器
      */
@@ -533,6 +607,23 @@ public class Interpreter implements ASTVisitor<Void> {
         @Override
         public Object visitLiteralExpression(LiteralExpression expr) {
             return expr.getValue();
+        }
+
+        @Override
+        public Object visitTypeCastExpression(TypeCastExpression expr) {
+            Object value = evaluate(expr.getExpression());
+            String targetType = expr.getTargetType();
+
+            debugger.logDetail("Casting " + value + " (" + getValueType(value) +
+                    ") to " + targetType);
+
+            Object result = Interpreter.this.performTypeCast(value, targetType,
+                    expr.getLineNumber(), expr.getColumnNumber(),
+                    expr.isExplicit());
+
+            debugger.logDetail("Result: " + result + " (" + getValueType(result) + ")");
+
+            return result;
         }
 
         @Override
@@ -551,6 +642,13 @@ public class Interpreter implements ASTVisitor<Void> {
                 return name;
             }
 
+            // 检查是否是唯一的静态方法名
+            String className = resolveClassNameForMethod(name, expr.getLineNumber(), expr.getColumnNumber());
+            if (className != null) {
+                debugger.logDetail("Variable expression resolved as static method: " + name + " -> " + className);
+                return name; // 返回方法名字符串，在函数调用中处理
+            }
+
             // 最后检查变量
             if (!variables.containsKey(name)) {
                 throw VastExceptions.NonExistentObject.variableNotFound(name);
@@ -559,11 +657,44 @@ public class Interpreter implements ASTVisitor<Void> {
         }
 
         @Override
+        public Object visitBitwiseExpression(BitwiseExpression expr) {
+            Object left = evaluate(expr.getLeft());
+            Object right = evaluate(expr.getRight());
+
+            switch (expr.getOperator()) {
+                case "&": return performBitwiseAnd(left, right);
+                case "|": return performBitwiseOr(left, right);
+                case "^": return performBitwiseXor(left, right);
+                default:
+                    throw new VastExceptions.NotGrammarException(
+                            "Unknown bitwise operator: " + expr.getOperator(),
+                            expr.getLineNumber(), expr.getColumnNumber()
+                    );
+            }
+        }
+
+        @Override
+        public Object visitFractionExpression(FractionExpression expr) {
+            Object value = evaluate(expr.getExpression());
+            boolean isPermanent = expr.isPermanent();
+
+            debugger.logDetail("Fraction expression: " + expr + ", value: " + value +
+                    ", permanent: " + isPermanent);
+
+            // 创建分数对象
+            Fraction fraction = createFraction(value,
+                    expr.getLineNumber(), expr.getColumnNumber());
+            fraction.setPermanent(isPermanent);
+
+            return fraction;
+        }
+
+        @Override
         public Object visitMemberAccessExpression(MemberAccessExpression expr) {
             Object left = evaluate(expr.getObject());
             String memberName = expr.getMemberName();
 
-            // 如果是变量访问类静态成员（如 Sys.print）
+            // 如果是变量访问类静态成员（如 Sys.printl）
             if (left instanceof String) {
                 String className = (String) left;
                 // 返回一个包装对象，包含类名和成员名
@@ -594,6 +725,18 @@ public class Interpreter implements ASTVisitor<Void> {
                 return callInternalMethod(methodRef.getClassName(), methodRef.getMethodName(), args);
             }
 
+            // 处理省略类名的静态方法调用（如 printl()）
+            if (callee instanceof String) {
+                String methodName = (String) callee;
+                String className = resolveClassNameForMethod(methodName,
+                        expr.getLineNumber(), expr.getColumnNumber());
+
+                if (className != null) {
+                    debugger.logDetail("Resolved method '" + methodName + "' to class: " + className);
+                    return callInternalMethod(className, methodName, args);
+                }
+            }
+
             // 其他类型的函数调用...
             throw new VastExceptions.NotGrammarException(
                     "Unsupported function call: " + expr,
@@ -615,23 +758,6 @@ public class Interpreter implements ASTVisitor<Void> {
 
             // 调用内部方法
             return Interpreter.this.callInternalMethod(className, methodName, args);
-        }
-
-        @Override
-        public Object visitTypeCastExpression(TypeCastExpression expr) {
-            Object value = evaluate(expr.getExpression());
-            String targetType = expr.getTargetType();
-
-            debugger.logDetail("Casting " + value + " (" + getValueType(value) +
-                    ") to " + targetType);
-
-            Object result = Interpreter.this.performTypeCast(value, targetType,
-                    expr.getLineNumber(), expr.getColumnNumber(),
-                    expr.isExplicit());
-
-            debugger.logDetail("Result: " + result + " (" + getValueType(result) + ")");
-
-            return result;
         }
 
         @Override
@@ -708,6 +834,14 @@ public class Interpreter implements ASTVisitor<Void> {
                             "Unary ++ requires numeric operand",
                             "Operand type: " + (right != null ? right.getClass().getSimpleName() : "null")
                     );
+                case "~":  // 按位取反
+                    if (right instanceof Integer) {
+                        return ~(Integer) right;
+                    }
+                    throw new VastExceptions.MathError(
+                            "Unary ~ requires integer operand",
+                            "Operand type: " + (right != null ? right.getClass().getSimpleName() : "null")
+                    );
                 default:
                     throw new VastExceptions.NotGrammarException(
                             "Unknown unary operator: " + expr.getOperator(),
@@ -753,13 +887,65 @@ public class Interpreter implements ASTVisitor<Void> {
         @Override
         public Void visitLoopStatement(LoopStatement stmt) { return null; }
         @Override
-        public Void visitGiveStatement(GiveStatement stmt) { return null; }
-        @Override
-        public Void visitDoStatement(DoStatement stmt) { return null; }
+        public Void visitUseStatement(UseStatement stmt) { return null; }
         @Override
         public Void visitSwapStatement(SwapStatement stmt) { return null; }
 
-        // 其他辅助方法保持不变...
+
+        //====================辅助方法=====================
+
+        private Fraction createFraction(Object value, int lineNumber, int columnNumber) {
+            try {
+                if (value instanceof Integer) {
+                    return new Fraction((Integer) value, 1);
+                } else if (value instanceof Double) {
+                    return Fraction.fromNumber(value);
+                } else if (value instanceof Fraction) {
+                    return (Fraction) value;  // 已经是分数，直接返回
+                } else {
+                    throw new VastExceptions.MathError(
+                            "Cannot create fraction from " + getValueType(value),
+                            lineNumber, columnNumber
+                    );
+                }
+            } catch (Exception e) {
+                throw new VastExceptions.MathError(
+                        "Failed to create fraction: " + e.getMessage(),
+                        lineNumber, columnNumber
+                );
+            }
+        }
+
+        private Object performBitwiseAnd(Object left, Object right) {
+            checkIntegerOperands(left, right, "bitwise AND");
+            int leftInt = toInt(left);
+            int rightInt = toInt(right);
+            return leftInt & rightInt;
+        }
+
+        private Object performBitwiseOr(Object left, Object right) {
+            checkIntegerOperands(left, right, "bitwise OR");
+            int leftInt = toInt(left);
+            int rightInt = toInt(right);
+            return leftInt | rightInt;
+        }
+
+        private Object performBitwiseXor(Object left, Object right) {
+            checkIntegerOperands(left, right, "bitwise XOR");
+            int leftInt = toInt(left);
+            int rightInt = toInt(right);
+            return leftInt ^ rightInt;
+        }
+
+        private void checkIntegerOperands(Object left, Object right, String operation) {
+            if (!(left instanceof Integer) || !(right instanceof Integer)) {
+                throw new VastExceptions.MathError(
+                        "Operands must be integers for " + operation,
+                        "Got: " + getValueType(left) + " and " + getValueType(right)
+                );
+            }
+        }
+
         private Object performPower(Object left, Object right) {
             checkNumberOperands(left, right);
             double base = toDouble(left);
@@ -900,6 +1086,8 @@ public class Interpreter implements ASTVisitor<Void> {
             }
             return toDouble(left) / toDouble(right);
         }
+
+
 
         private int compareValues(Object left, Object right) {
             if (left instanceof Double && right instanceof Double) {
@@ -1150,6 +1338,8 @@ public class Interpreter implements ASTVisitor<Void> {
             return className + "." + methodName;
         }
     }
+
+
 
     public Object getLastResult() {
         return lastResult;

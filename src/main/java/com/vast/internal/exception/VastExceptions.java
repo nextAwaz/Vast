@@ -1,5 +1,7 @@
 package com.vast.internal.exception;
 
+import java.util.Set;
+
 /**
  * Vast异常总类
  * 包含所有Vast特定异常的静态内部类定义
@@ -63,8 +65,35 @@ public class VastExceptions {
     }
 
     /**
+     * 指代不明异常
+     * 当省略类名调用静态方法但存在多个同名方法时抛出
+     */
+    public static class AmbiguousReferenceException extends VastRuntimeException {
+        public AmbiguousReferenceException(String methodName, Set<String> conflictingClasses) {
+            super("Ambiguous reference to method '" + methodName +
+                    "'. It exists in multiple classes: " + conflictingClasses);
+        }
+
+        public AmbiguousReferenceException(String methodName, Set<String> conflictingClasses,
+                                           int lineNumber, int columnNumber) {
+            super("Ambiguous reference to method '" + methodName +
+                    "' at line " + lineNumber + ", column " + columnNumber +
+                    ". It exists in multiple classes: " + conflictingClasses);
+        }
+
+        public static AmbiguousReferenceException forMethod(String methodName, Set<String> classes) {
+            return new AmbiguousReferenceException(methodName, classes);
+        }
+
+        public static AmbiguousReferenceException forMethod(String methodName, Set<String> classes,
+                                                            int lineNumber, int columnNumber) {
+            return new AmbiguousReferenceException(methodName, classes, lineNumber, columnNumber);
+        }
+    }
+
+    /**
      * 参数传递异常
-     * 通过do或give语句传参数时出现的异常总类
+     * 通过use语句传参数时出现的异常总类
      */
     public static class PassParameterException extends VastRuntimeException {
         public PassParameterException() {

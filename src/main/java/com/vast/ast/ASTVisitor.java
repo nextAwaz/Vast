@@ -19,17 +19,19 @@ public interface ASTVisitor<T> {
     T visitMethodCallExpression(MethodCallExpression expr);
     T visitTypeCastExpression(TypeCastExpression expr);
 
+    T visitFractionExpression(FractionExpression expr);
+    T visitBitwiseExpression(BitwiseExpression expr);//按位运算
+
     // 语句访问方法
     T visitVariableDeclaration(VariableDeclaration stmt);
     T visitAssignmentStatement(AssignmentStatement stmt);
     T visitExpressionStatement(ExpressionStatement stmt);
     T visitImportStatement(ImportStatement stmt);
     T visitLoopStatement(LoopStatement stmt);
-    T visitGiveStatement(GiveStatement stmt);
-    T visitDoStatement(DoStatement stmt);
+    T visitUseStatement(UseStatement stmt);
     T visitSwapStatement(SwapStatement stmt);
 
-    // 默认的访问方法，用于处理未知节点类型
+    //处理未知节点类型
     default T visit(ASTNode node) {
         return node.accept(this);
     }
