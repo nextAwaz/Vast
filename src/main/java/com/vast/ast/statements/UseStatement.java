@@ -13,7 +13,7 @@ public class UseStatement extends Statement {
     private final VariableExpression className;
     private final VariableExpression methodName;
     private final List<Expression> arguments;
-    private final Expression methodCall; // 新增字段
+    private final Expression methodCall;
 
     public UseStatement(VariableExpression className, VariableExpression methodName,
                         List<Expression> arguments, int lineNumber, int columnNumber) {

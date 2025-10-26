@@ -9,7 +9,7 @@ import java.nio.file.*;
 import java.util.*;
 
 public class VastCLI {
-    static String ver = "0.1.1"; //版本信息
+    static String ver = "0.1.2"; //版本信息
 
     public static void main(String[] args) {
         if (args.length == 0) {
@@ -89,7 +89,7 @@ public class VastCLI {
 
         long startTime = System.currentTimeMillis();
         try {
-            println("@ Running VastScript: " + scriptPath);
+            println("@ Running Vast: " + scriptPath);
             if (debugLevel != Debugger.Level.BASIC) {
                 println("@ Debug level: " + debugLevel);
             }
@@ -296,7 +296,7 @@ public class VastCLI {
     }
 
     private static void handleShellCommand() {
-        println("@ VastScript Interactive Shell");
+        println("@ Vast Interactive Shell");
         println("Type 'exit' or 'quit' to exit");
         println("Type 'clear' to clear screen");
         println("Type 'debug basic|detail|base' to change debug level");
@@ -413,9 +413,7 @@ public class VastCLI {
     }
 
     private static void handleVersionCommand() {
-        println("@ VastScript v" + ver);
-        println("A lightweight script language with AST");
-        println("Built for simplicity and performance");
+        println("@ Vast v" + ver);
         println("Java: " + System.getProperty("java.version"));
     }
 
@@ -496,7 +494,7 @@ public class VastCLI {
     }
 
     private static void printUsage() {
-        println("@ VastScript Command Line Interface");
+        println("@ Vast Command Line Interface");
         println("Usage: vast <command> [arguments]");
         println();
         println("Commands:");
@@ -518,7 +516,7 @@ public class VastCLI {
     }
 
     private static void printGeneralHelp() {
-        println("@ VastScript Help");
+        println("@ Vast Help");
         println("=================");
         println("For specific help topics, use:");
         println("  vast help syntax    - Language syntax");
@@ -532,14 +530,14 @@ public class VastCLI {
         println("  clear       - Clear screen");
         println("  debug level - Set debug level (basic|detail|base)");
         println();
-        println("You can type any VastScript code directly:");
+        println("You can type any Vast code directly:");
         println("  var x = 10");
         println("  var y = x * 2");
-        println("  swap(x)(y)");
+        println("  swap(x, y)");
     }
 
     private static void printSyntaxHelp() {
-        println("VastScript Syntax");
+        println("Vast Syntax");
         println("=================");
         println("imp Sys                    # Import class");
         println("var x = 10                 # Variable declaration");

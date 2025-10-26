@@ -167,6 +167,7 @@ public class VastVM {//Vast 虚拟机核心类
         return lastResult;
     }
 
+    @Deprecated
     public void reset() {
         importedClasses.clear();
         localVariables.clear();

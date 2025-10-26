@@ -1,4 +1,4 @@
-package com.vast.internal.exception;
+package com.vast.internal.exception;//弃用
 
 /**
  * 异常处理工具类
