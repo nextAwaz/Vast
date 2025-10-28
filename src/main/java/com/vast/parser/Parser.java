@@ -26,7 +26,7 @@ public class Parser {
      */
     public Program parseProgram() {
         List<Statement> statements = new ArrayList<>();
-        debugger.logParser("Starting program parsing");
+        debugger.log("Starting program parsing");
 
         while (!isAtEnd()) {
             // 跳过换行符
@@ -45,7 +45,7 @@ public class Parser {
             match("NEWLINE");
         }
 
-        debugger.logAST("Program parsed successfully with " + statements.size() + " statements");
+        debugger.log("Program parsed successfully with " + statements.size() + " statements");
         return new Program(statements);
     }
 
@@ -61,11 +61,8 @@ public class Parser {
         if (match("IMPORT")) {
             return parseImportStatement();
         }
-        if (match("VAR")) {
-            return parseVariableDeclaration();
-        }
 
-        // 新增：检查是否是类型声明（如 int x, string name 等）
+        // 检查是否是强类型声明（如 int x, string name 等）
         if (check("IDENTIFIER") && isTypeName(peek().getLexeme())) {
             return parseTypedVariableDeclaration();
         }
@@ -80,10 +77,9 @@ public class Parser {
             return parseSwapStatement();
         }
 
-        // 赋值语句或表达式语句
+        // 自由类型赋值或表达式语句
         return parseExpressionOrAssignment();
     }
-
 
     private Statement parseImportStatement() {
         Token importToken = previous();
@@ -94,68 +90,6 @@ public class Parser {
                 importToken.getLine(), importToken.getColumn());
     }
 
-    private VariableDeclaration parseVariableDeclaration() {
-        Token varToken = previous();
-        String typeHint = null;
-        boolean isExplicitCast = false;
-        String castType = null;
-
-        // 检查是否有类型提示（新语法：类型名直接作为开始）
-        if (check("IDENTIFIER") && isTypeName(peek().getLexeme())) {
-            typeHint = advance().getLexeme();
-        }
-
-        String name = consume("IDENTIFIER", "Expect variable name").getLexeme();
-
-        Expression initializer = null;
-        if (match("EQUAL")) {
-            // 检查是否有显式类型转换语法：newName = oldName(type)
-            if (check("IDENTIFIER")) {
-                Token identifierToken = peek();
-                String identifierName = identifierToken.getLexeme();
-
-                // 查看下一个token是否是左括号接类型名
-                if (current + 1 < tokens.size() &&
-                        tokens.get(current + 1).getType().equals("LEFT_PAREN") &&
-                        current + 2 < tokens.size() &&
-                        tokens.get(current + 2).getType().equals("IDENTIFIER") &&
-                        isTypeName(tokens.get(current + 2).getLexeme()) &&
-                        current + 3 < tokens.size() &&
-                        tokens.get(current + 3).getType().equals("RIGHT_PAREN")) {
-
-                    // 这是显式类型转换：name = oldName(type)
-                    advance(); // 消耗标识符
-                    advance(); // 消耗左括号
-                    castType = advance().getLexeme(); // 消耗类型名
-                    advance(); // 消耗右括号
-                    isExplicitCast = true;
-
-                    // 创建变量表达式作为被转换的值
-                    Expression sourceExpr = new VariableExpression(identifierName,
-                            identifierToken.getLine(), identifierToken.getColumn());
-
-                    // 创建类型转换表达式
-                    initializer = new TypeCastExpression(sourceExpr, castType,
-                            identifierToken.getLine(), identifierToken.getColumn());
-                } else {
-                    // 普通表达式
-                    initializer = parseExpression();
-                }
-            } else {
-                // 普通表达式
-                initializer = parseExpression();
-            }
-        }
-
-        // 如果是隐式类型转换（强类型声明但初始值类型不同），生成警告
-        if (typeHint != null && initializer != null && !isExplicitCast) {
-            // 这里我们只记录需要警告，实际警告在解释器阶段生成
-            System.out.println("@ [WARNING] Implicit type conversion for variable: " + name);
-        }
-
-        return new VariableDeclaration(name, typeHint, initializer, isExplicitCast,
-                varToken.getLine(), varToken.getColumn());
-    }
 
     private Statement parseLoopStatement() {
         Token loopToken = previous();
@@ -278,7 +212,17 @@ public class Parser {
     private Statement parseExpressionOrAssignment() {
         Expression expr = parseExpression();
 
-        // 检查是否是方法调用：ClassName.method(args)
+        // 检查是否是内联类型转换：type(expression)
+        if (expr instanceof TypeCastExpression) {
+            TypeCastExpression castExpr = (TypeCastExpression) expr;
+            // 如果类型转换表达式后面没有赋值，就是内联类型转换
+            if (!check("EQUAL")) {
+                return new InlineTypeCastStatement(castExpr,
+                        castExpr.getLineNumber(), castExpr.getColumnNumber());
+            }
+        }
+
+        // 检查是否是方法调用
         if (expr instanceof VariableExpression && match("DOT")) {
             if (match("IDENTIFIER")) {
                 String methodName = previous().getLexeme();
@@ -287,7 +231,6 @@ public class Parser {
                     List<Expression> arguments = parseExpressionList();
                     consume("RIGHT_PAREN", "Expect ')' after arguments");
 
-                    // 创建方法调用表达式
                     return new ExpressionStatement(
                             new MethodCallExpression(
                                     (VariableExpression) expr,
@@ -305,10 +248,13 @@ public class Parser {
             }
         }
 
-        // 检查是否是赋值语句
+        // 检查是否是自由类型赋值
         if (expr instanceof VariableExpression && match("EQUAL")) {
             Expression value = parseExpression();
-            return new AssignmentStatement(((VariableExpression) expr).getName(), value,
+
+            // 自由类型赋值
+            String varName = ((VariableExpression) expr).getName();
+            return new AssignmentStatement(varName, value, null,
                     expr.getLineNumber(), expr.getColumnNumber());
         }
 
@@ -442,6 +388,11 @@ public class Parser {
         Token typeToken = advance(); // 消耗类型名
         String typeName = typeToken.getLexeme();
 
+        // 检查是否是类型转换语法：newType newName = newType(oldName)
+        if (check("LEFT_PAREN")) {
+            return parseTypeCastAssignment(typeToken);
+        }
+
         String name = consume("IDENTIFIER", "Expect variable name after type").getLexeme();
 
         Expression initializer = null;
@@ -449,7 +400,46 @@ public class Parser {
             initializer = parseExpression();
         }
 
-        return new VariableDeclaration(name, typeName, initializer,
+        return new VariableDeclaration(name, typeName, initializer, false,
+                typeToken.getLine(), typeToken.getColumn());
+    }
+
+    /**
+     * 解析类型转换赋值：newType newName = newType(oldName)
+     */
+    private VariableDeclaration parseTypeCastAssignment(Token typeToken) {
+        String targetType = typeToken.getLexeme();
+
+        consume("LEFT_PAREN", "Expect '(' after type for type cast assignment");
+
+        Expression sourceExpr = parseExpression();
+
+        consume("RIGHT_PAREN", "Expect ')' after expression in type cast");
+
+        String name = consume("IDENTIFIER", "Expect variable name after type cast").getLexeme();
+
+        consume("EQUAL", "Expect '=' in type cast assignment");
+
+        // 解析右侧的类型转换表达式
+        Expression typeCastExpr = parseExpression();
+
+        // 验证右侧确实是类型转换表达式
+        if (!(typeCastExpr instanceof TypeCastExpression)) {
+            throw error(peek(), "Right side of type cast assignment must be a type cast expression");
+        }
+
+        TypeCastExpression castExpr = (TypeCastExpression) typeCastExpr;
+
+        // 创建新的类型转换表达式，使用指定的变量名
+        TypeCastExpression finalCastExpr = new TypeCastExpression(
+                castExpr.getExpression(),
+                targetType,
+                true,
+                typeToken.getLine(),
+                typeToken.getColumn()
+        );
+
+        return new VariableDeclaration(name, targetType, finalCastExpr, true,
                 typeToken.getLine(), typeToken.getColumn());
     }
 
@@ -624,6 +614,27 @@ public class Parser {
 
             return new FractionExpression(expr, isPermanent,
                     operator.getLine(), operator.getColumn());
+        }
+
+        // 处理类型转换表达式：(type) expression
+        if (match("LEFT_PAREN")) {
+            // 检查是否是类型转换
+            if (check("IDENTIFIER") && isTypeName(peek().getLexeme())) {
+                Token typeToken = advance(); // 消耗类型名
+                String targetType = typeToken.getLexeme();
+
+                consume("RIGHT_PAREN", "Expect ')' after type in type cast");
+
+                Expression expression = parseUnary();
+
+                return new TypeCastExpression(expression, targetType, true,
+                        typeToken.getLine(), typeToken.getColumn());
+            } else {
+                // 普通括号表达式
+                Expression expr = parseExpression();
+                consume("RIGHT_PAREN", "Expect ')' after expression");
+                return expr;
+            }
         }
 
         // 处理按位取反和其他一元运算符

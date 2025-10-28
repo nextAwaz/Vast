@@ -22,7 +22,6 @@ public class    Lexer {
     private final Debugger debugger = Debugger.getInstance();
 
     static {
-        KEYWORDS.put("var", "VAR");
         KEYWORDS.put("imp", "IMPORT");
         KEYWORDS.put("loop", "LOOP");
         KEYWORDS.put("use", "USE");
@@ -330,6 +329,6 @@ public class    Lexer {
     }
 
     private void error(String message) {
-        debugger.logError("Line " + line + ", Column " + column + ": " + message);
+        debugger.error("Line " + line + ", Column " + column + ": " + message);
     }
 }

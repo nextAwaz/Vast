@@ -9,7 +9,8 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.List;
 
-public class Vast {// Vast 脚本执行入口
+public class Vast {
+    // Vast 脚本执行入口
 
     public static class VastException extends VastExceptions.VastRuntimeException {
         public VastException(String message) {
@@ -22,20 +23,21 @@ public class Vast {// Vast 脚本执行入口
     }
 
     public static class Builder {
-        private Debugger.Level debugLevel = Debugger.Level.BASIC;
+        private boolean debug = false;
 
-        public Builder debugLevel(Debugger.Level level) {
-            this.debugLevel = level;
+        public Builder debug(boolean debug) {
+            this.debug = debug;
             return this;
         }
 
         public VastVM build() {
             VastVM vm = new VastVM();
-            vm.setDebugLevel(debugLevel);
+            vm.setDebugMode(debug);
             return vm;
         }
 
         public void run(String scriptPath) {
+            validateScriptFile(scriptPath);
             VastVM vm = build();
             try {
                 List<String> lines = Files.readAllLines(Paths.get(scriptPath));
@@ -45,17 +47,8 @@ public class Vast {// Vast 脚本执行入口
             }
         }
 
-        public void execute(String code) {
-            VastVM vm = build();
-            try {
-                List<String> lines = List.of(code.split("\n"));
-                vm.execute(lines);
-            } catch (Exception e) {
-                throw new VastException("Failed to execute code: " + e.getMessage(), e);
-            }
-        }
-
         public Object runWithResult(String scriptPath) {
+            validateScriptFile(scriptPath);
             VastVM vm = build();
             try {
                 List<String> lines = Files.readAllLines(Paths.get(scriptPath));
@@ -72,47 +65,22 @@ public class Vast {// Vast 脚本执行入口
 
     // 保留旧的 run 方法用于兼容性
     public static void run(String scriptPath) {
-        run(scriptPath, Debugger.Level.BASIC);
+        run(scriptPath, false);
     }
 
     // 保留旧的 run 方法用于兼容性
     public static void run(String scriptPath, boolean debug) {
-        run(scriptPath, debug ? Debugger.Level.DETAIL : Debugger.Level.BASIC);
-    }
-
-    // 新的 run 方法使用调试等级
-    public static void run(String scriptPath, Debugger.Level debugLevel) {
-        builder().debugLevel(debugLevel).run(scriptPath);
-    }
-
-    // 保留旧的 execute 方法用于兼容性
-    public static void execute(String code) {
-        execute(code, Debugger.Level.BASIC);
-    }
-
-    // 保留旧的 execute 方法用于兼容性
-    public static void execute(String code, boolean debug) {
-        execute(code, debug ? Debugger.Level.DETAIL : Debugger.Level.BASIC);
-    }
-
-    // 新的 execute 方法使用调试等级
-    public static void execute(String code, Debugger.Level debugLevel) {
-        builder().debugLevel(debugLevel).execute(code);
+        builder().debug(debug).run(scriptPath);
     }
 
     // 保留旧的 runWithResult 方法用于兼容性
     public static Object runWithResult(String scriptPath) {
-        return runWithResult(scriptPath, Debugger.Level.BASIC);
+        return runWithResult(scriptPath, false);
     }
 
     // 保留旧的 runWithResult 方法用于兼容性
     public static Object runWithResult(String scriptPath, boolean debug) {
-        return runWithResult(scriptPath, debug ? Debugger.Level.DETAIL : Debugger.Level.BASIC);
-    }
-
-    // 新的 runWithResult 方法使用调试等级
-    public static Object runWithResult(String scriptPath, Debugger.Level debugLevel) {
-        return builder().debugLevel(debugLevel).runWithResult(scriptPath);
+        return builder().debug(debug).runWithResult(scriptPath);
     }
 
     private static void validateScriptFile(String scriptPath) {
@@ -126,15 +94,28 @@ public class Vast {// Vast 脚本执行入口
     }
 
     /**
-     * 快速执行一段代码（用于测试）
+     * 获取 Vast 版本信息
      */
-    public static Object quickEval(String code) {
-        try {
-            VastVM vm = new VastVM();
-            List<String> lines = List.of(code.split("\n"));
-            return vm.executeWithResult(lines);
-        } catch (Exception e) {
-            throw new VastException("Evaluation failed: " + e.getMessage(), e);
-        }
+    public static String getVersion() {
+        return "0.1.2";
+    }
+
+    /**
+     * 获取 VM 信息（用于调试）
+     */
+    public static String getVMInfo() {
+        VastVM vm = new VastVM();
+        return vm.getVMInfo();
+    }
+
+    /**
+     * 重置 VM 状态（用于测试）
+     */
+    @Deprecated
+    public static void resetVM() {
+        // 注意：这个方法不建议在生产代码中使用
+        // 主要用于单元测试和调试
+        VastVM vm = new VastVM();
+        vm.reset();
     }
 }

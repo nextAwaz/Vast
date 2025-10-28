@@ -1,15 +1,17 @@
 package com.vast;
 
-import com.vast.internal.Debugger;
-import com.vast.registry.VastExternalLibrary;
-import com.vast.registry.VastLibraryRegistry;
+import com.vast.Vast;
+import com.vast.vm.VastVM;
 
-import java.io.*;
-import java.nio.file.*;
-import java.util.*;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Scanner;
 
 public class VastCLI {
-    static String ver = "0.1.2"; //版本信息
+    static String ver = "0.1.2(hotfix-1)"; //版本信息
 
     public static void main(String[] args) {
         if (args.length == 0) {
@@ -23,9 +25,6 @@ public class VastCLI {
             switch (command) {
                 case "run":
                     handleRunCommand(args);
-                    break;
-                case "eval":
-                    handleEvalCommand(args);
                     break;
                 case "shell":
                     handleShellCommand();
@@ -61,41 +60,32 @@ public class VastCLI {
 
     private static void handleRunCommand(String[] args) {
         if (args.length < 2) {
-            println("Usage: run <script.vast> [--debug-level=basic|detail|base]");
+            println("Usage: run <script.vast> [--debug]");
             return;
         }
 
         String scriptPath = args[1];
-        Debugger.Level debugLevel = Debugger.Level.BASIC;
+        boolean debugMode = false;
 
-        // 解析调试等级参数
+        // 检查--debug参数
         for (String arg : args) {
-            if (arg.startsWith("--debug-level=")) {
-                String levelStr = arg.substring("--debug-level=".length()).toLowerCase();
-                switch (levelStr) {
-                    case "detail":
-                        debugLevel = Debugger.Level.DETAIL;
-                        break;
-                    case "base":
-                        debugLevel = Debugger.Level.BASE;
-                        break;
-                    case "basic":
-                    default:
-                        debugLevel = Debugger.Level.BASIC;
-                        break;
-                }
+            if ("--debug".equals(arg)) {
+                debugMode = true;
+                break;
             }
         }
 
         long startTime = System.currentTimeMillis();
         try {
             println("@ Running Vast: " + scriptPath);
-            if (debugLevel != Debugger.Level.BASIC) {
-                println("@ Debug level: " + debugLevel);
+            if (debugMode) {
+                println("@ Debug mode enabled - showing stack traces");
             }
             println("=".repeat(50));
 
-            Vast.run(scriptPath, debugLevel);
+            Vast.builder()
+                    .debug(debugMode)
+                    .run(scriptPath);
 
             long endTime = System.currentTimeMillis();
             println("=".repeat(50));
@@ -103,207 +93,21 @@ public class VastCLI {
 
         } catch (Vast.VastException e) {
             System.err.println("[FAILURE] Script execution failed: " + e.getMessage());
-            if (debugLevel == Debugger.Level.BASE) {
-                e.printStackTrace();
-            }
+            // 堆栈追踪由Debugger根据模式决定是否显示
         }
     }
 
-    private static void handleLibCreateCommand(String[] args) {
-        if (args.length < 3) {
-            println("Usage: vast lib create <library-name>");
-            return;
-        }
-
-        String libName = args[2];
-        String targetDir = "./" + libName;
-
-        try {
-            // 从resources复制示例库模板
-            copyExampleLibraryTemplate(libName, targetDir);
-            println("@ Library template created: " + targetDir);
-            println("@ Next steps:");
-            println("  1. Edit library.properties");
-            println("  2. Implement your library class");
-            println("  3. Package as .jar or .zip");
-            println("  4. Use with: imp " + libName);
-
-        } catch (Exception e) {
-            System.err.println("Failed to create library template: " + e.getMessage());
-        }
-    }
-
-    private static void copyExampleLibraryTemplate(String libName, String targetDir) throws IOException {
-        // 这里实现从resources目录复制exampleLibs.zip内容的逻辑
-        // 由于无法直接访问文件系统，这里提供伪代码
-
-        File target = new File(targetDir);
-        if (target.exists()) {
-            throw new IOException("Target directory already exists: " + targetDir);
-        }
-
-        // 创建目录结构
-        Files.createDirectories(Paths.get(targetDir));
-        Files.createDirectories(Paths.get(targetDir, "src"));
-
-        // 创建library.properties
-        String props = String.format(
-                "name=%s\n" +
-                        "version=1.0.0\n" +
-                        "description=A custom Vast library\n" +
-                        "author=Your Name\n" +
-                        "mainClass=com.example.%s.%sLibrary\n" +
-                        "dependencies=\n" +
-                        "config.example=value\n",
-                libName, libName.toLowerCase(), capitalize(libName)
-        );
-
-        Files.write(Paths.get(targetDir, "library.properties"), props.getBytes());
-
-        // 创建示例Java文件
-        String javaCode = String.format(
-                "package com.example.%s;\n\n" +
-                        "import com.vast.registry.*;\n" +
-                        "import com.vast.vm.VastVM;\n" +
-                        "import java.util.*;\n\n" +
-                        "public class %sLibrary implements VastExternalLibrary {\n\n" +
-                        "    @Override\n" +
-                        "    public LibraryMetadata getMetadata() {\n" +
-                        "        return new LibraryMetadata(\n" +
-                        "            \"%s\", \n" +
-                        "            \"1.0.0\", \n" +
-                        "            \"A custom Vast library\", \n" +
-                        "            \"Your Name\"\n" +
-                        "        );\n" +
-                        "    }\n\n" +
-                        "    @Override\n" +
-                        "    public void initialize(VastVM vm, VastLibraryRegistry registry) {\n" +
-                        "        System.out.println(\"%s library initialized\");\n" +
-                        "    }\n\n" +
-                        "    @Override\n" +
-                        "    public Map<String, Class<?>> getProvidedClasses() {\n" +
-                        "        Map<String, Class<?>> classes = new HashMap<>();\n" +
-                        "        // Register your classes here\n" +
-                        "        // classes.put(\"MyClass\", MyClass.class);\n" +
-                        "        return classes;\n" +
-                        "    }\n\n" +
-                        "    // Add your library methods here\n" +
-                        "    public static void exampleMethod() {\n" +
-                        "        System.out.println(\"Hello from %s library!\");\n" +
-                        "    }\n" +
-                        "}\n",
-                libName.toLowerCase(), capitalize(libName), libName, libName, libName
-        );
-
-        Files.write(Paths.get(targetDir, "src", capitalize(libName) + "Library.java"),
-                javaCode.getBytes());
-
-        // 创建README
-        String readme = String.format(
-                "# %s Library\n\n" +
-                        "A custom library for Vast scripting language.\n\n" +
-                        "## Usage\n\n" +
-                        "```vast\n" +
-                        "imp %s\n" +
-                        "// Use your library classes and methods here\n" +
-                        "```\n\n" +
-                        "## Building\n\n" +
-                        "1. Compile the Java source\n" +
-                        "2. Package as .jar file\n" +
-                        "3. Place in vast_libs directory or current directory\n",
-                libName, libName
-        );
-
-        Files.write(Paths.get(targetDir, "README.md"), readme.getBytes());
-    }
-
-    private static String capitalize(String str) {
-        if (str == null || str.isEmpty()) return str;
-        return str.substring(0, 1).toUpperCase() + str.substring(1).toLowerCase();
-    }
-
-    private static void handleLibListCommand() {
-        VastLibraryRegistry registry = VastLibraryRegistry.getInstance();
-        Set<String> libraries = registry.getRegisteredLibraryIds();
-
-        println("@ Available Libraries:");
-        if (libraries.isEmpty()) {
-            println("  No libraries registered");
-        } else {
-            libraries.forEach(lib -> println("  - " + lib));
-        }
-    }
-
-    private static void handleLibInfoCommand(String[] args) {
-        if (args.length < 3) {
-            println("Usage: vast lib info <library-name>");
-            return;
-        }
-
-        String libName = args[2];
-        VastLibraryRegistry registry = VastLibraryRegistry.getInstance();
-
-        if (registry.isLibraryLoaded(libName)) {
-            VastExternalLibrary lib = registry.getLoadedLibrary(libName);
-            println("@ Library Info: " + libName);
-            println("  Metadata: " + lib.getMetadata());
-            println("  Provided Classes: " + lib.getProvidedClasses().keySet());
-        } else {
-            println("Library not loaded: " + libName);
-        }
-    }
-
-    private static void handleEvalCommand(String[] args) {
-        if (args.length < 2) {
-            println("Usage: eval \"code\" [--debug-level=basic|detail|base]");
-            return;
-        }
-
-        // 解析调试等级参数
-        Debugger.Level debugLevel = Debugger.Level.BASIC;
-        StringBuilder code = new StringBuilder();
-
-        for (int i = 1; i < args.length; i++) {
-            if (args[i].startsWith("--debug-level=")) {
-                String levelStr = args[i].substring("--debug-level=".length()).toLowerCase();
-                switch (levelStr) {
-                    case "detail":
-                        debugLevel = Debugger.Level.DETAIL;
-                        break;
-                    case "base":
-                        debugLevel = Debugger.Level.BASE;
-                        break;
-                    case "basic":
-                    default:
-                        debugLevel = Debugger.Level.BASIC;
-                        break;
-                }
-            } else {
-                if (code.length() > 0) code.append(" ");
-                code.append(args[i]);
-            }
-        }
-
-        try {
-            println("@ Evaluating: " + code);
-            Vast.execute(code.toString(), debugLevel);
-        } catch (Vast.VastException e) {
-            System.err.println("@ Evaluation failed: " + e.getMessage());
-            if (debugLevel == Debugger.Level.BASE) {
-                e.printStackTrace();
-            }
-        }
-    }
+    // 移除handleEvalCommand方法
 
     private static void handleShellCommand() {
         println("@ Vast Interactive Shell");
         println("Type 'exit' or 'quit' to exit");
         println("Type 'clear' to clear screen");
-        println("Type 'debug basic|detail|base' to change debug level");
+        println("Type 'debug on/off' to toggle stack traces");
         println("=".repeat(50));
 
         Scanner scanner = new Scanner(System.in);
-        Debugger.Level debugLevel = Debugger.Level.BASIC;
+        boolean debugMode = false;
 
         while (true) {
             System.out.print("vast> ");
@@ -322,35 +126,29 @@ public class VastCLI {
                 continue;
             }
 
-            // 处理调试等级设置
+            // 处理调试模式切换
             if (input.startsWith("debug ")) {
-                String levelStr = input.substring(6).toLowerCase();
-                switch (levelStr) {
-                    case "detail":
-                        debugLevel = Debugger.Level.DETAIL;
-                        println("@ Debug level set to: DETAIL");
-                        break;
-                    case "base":
-                        debugLevel = Debugger.Level.BASE;
-                        println("@ Debug level set to: BASE");
-                        break;
-                    case "basic":
-                        debugLevel = Debugger.Level.BASIC;
-                        println("@ Debug level set to: BASIC");
-                        break;
-                    default:
-                        println("@ Unknown debug level: " + levelStr);
-                        println("@ Available levels: basic, detail, base");
-                        break;
+                String mode = input.substring(6).toLowerCase();
+                if ("on".equals(mode) || "true".equals(mode)) {
+                    debugMode = true;
+                    println("@ Debug mode ON - showing stack traces");
+                } else if ("off".equals(mode) || "false".equals(mode)) {
+                    debugMode = false;
+                    println("@ Debug mode OFF");
+                } else {
+                    println("@ Usage: debug on/off");
                 }
                 continue;
             }
 
             try {
-                Vast.execute(input, debugLevel);
-            } catch (Vast.VastException e) {
+                // 在shell中直接使用VastVM执行单行代码
+                VastVM vm = new VastVM();
+                vm.setDebugMode(debugMode);
+                vm.execute(List.of(input));
+            } catch (Exception e) {
                 System.err.println("Error: " + e.getMessage());
-                if (debugLevel == Debugger.Level.BASE) {
+                if (debugMode) {
                     e.printStackTrace();
                 }
             }
@@ -360,7 +158,27 @@ public class VastCLI {
         System.out.println("@ Goodbye!");
     }
 
-    //外置库模块生成
+    // 修改printUsage方法 - 移除eval相关说明
+    private static void printUsage() {
+        println("@ Vast Command Line Interface");
+        println("Usage: vast <command> [arguments]");
+        println();
+        println("Commands:");
+        println("  run <script.vast> [--debug]    Execute a script file");
+        println("  shell                Start interactive shell");
+        println("  help [topic]         Show help information");
+        println("  version              Show version info");
+        println("  list                 List built-in features");
+        println("  info <script.vast>   Show script statistics");
+        println("  lib <command>        Manage external libraries");
+        println();
+        println("Examples:");
+        println("  vast run script.vast");
+        println("  vast run script.vast --debug");
+        println("  vast shell");
+        println("  vast help syntax");
+    }
+
     private static void handleLibCommand(String[] args) {
         if (args.length < 2) {
             println("Usage: vast lib <command>");
@@ -426,34 +244,25 @@ public class VastCLI {
         println("  var (int) x = 10              - Typed variable");
         println("  imp ClassName                 - Import class");
         println("  loop(5): ...                  - Loop statement");
-        println("  give(Class)(var1, var2)       - Give statement");
-        println("  do(Class)(method)(args)       - Do statement");
-        println("  swap(a)(b)                    - Swap variables");
+        println("  use(Class.method(args))       - Use statement");
+        println("  swap(a, b)                    - Swap variables");
         println();
 
         println("Operators:");
-        println("  a + b                         - Addition/Concatenation");
-        println("  a - b                         - Subtraction");
-        println("  a * b                         - Multiplication");
-        println("  a / b                         - Division");
+        println("  a + b, a - b, a * b, a / b   - Basic arithmetic");
         println("  a ** b                        - Power");
         println("  a // b                        - Integer division");
         println("  a ++ b                        - Number concatenation");
         println("  a == b, a != b                - Equality");
         println("  a > b, a < b, a >= b, a <= b  - Comparison");
         println("  a && b, a || b                - Logical operators");
+        println("  a & b, a | b, a ^ b, ~a       - Bitwise operators");
         println();
 
-        println("Type System:");
-        println("  Dynamic typing with optional static type hints");
-        println("  Automatic type conversion");
-        println("  Support for: int, double, boolean, string");
-        println();
-
-        println("AST Features:");
-        println("  Abstract Syntax Tree compilation");
-        println("  Visitor pattern for execution");
-        println("  Extensible architecture");
+        println("Special Features:");
+        println("  $(expression)                 - Fraction (single step)");
+        println("  $$(expression)                - Permanent fraction");
+        println("  Type casting: (type) value    - Explicit type conversion");
     }
 
     private static void handleInfoCommand(String[] args) {
@@ -487,34 +296,6 @@ public class VastCLI {
         }
     }
 
-    // 辅助方法
-    private static void clearScreen() {
-        System.out.print("\033[H\033[2J");
-        System.out.flush();
-    }
-
-    private static void printUsage() {
-        println("@ Vast Command Line Interface");
-        println("Usage: vast <command> [arguments]");
-        println();
-        println("Commands:");
-        println("  run <script.vast> [--debug-mode=[level]]    Execute a script file");
-        println("  eval \"code\"         Execute code directly");
-        println("  shell                Start interactive shell");
-        println("  help [topic]         Show help information");
-        println("  version              Show version info");
-        println("  list                 List built-in features");
-        println("  info <script.vast>   Show script statistics");
-        println("  lib <command>        Manage external libraries");
-        println();
-        println("Examples:");
-        println("  vast run script.vast");
-        println("  vast run script.vast --debug");
-        println("  vast eval \"var x = 10\"");
-        println("  vast shell");
-        println("  vast help syntax");
-    }
-
     private static void printGeneralHelp() {
         println("@ Vast Help");
         println("=================");
@@ -528,7 +309,7 @@ public class VastCLI {
         println("Shell Commands:");
         println("  exit, quit  - Exit shell");
         println("  clear       - Clear screen");
-        println("  debug level - Set debug level (basic|detail|base)");
+        println("  debug on/off - Toggle stack traces");
         println();
         println("You can type any Vast code directly:");
         println("  var x = 10");
@@ -540,10 +321,13 @@ public class VastCLI {
         println("Vast Syntax");
         println("=================");
         println("imp Sys                    # Import class");
-        println("var x = 10                 # Variable declaration");
-        println("var (int) y = 20           # Typed variable");
+        println("a = 10                     # Free type assignment");
+        println("int b = 20                 # Strong type assignment");
+        println("string name = \"hello\"     # Strong type with string");
+        println("int c = int(\"123\")        # Type cast assignment");
+        println("int(d)                     # Inline type cast");
         println("loop(5):                   # Loop 5 times");
-        println("    var z = x + y          # Indented block");
+        println("    e = a + b              # Indented block");
         println("swap(a, b)                 # Swap variables");
         println("use(ClassName.method(args)) # Use method");
     }
@@ -556,17 +340,159 @@ public class VastCLI {
         println("Example Scripts");
         println("===============");
         println("Basic:");
-        println("  var x = 10");
-        println("  var y = 20");
-        println("  var z = x + y");
-        println("  swap(x, y)");
+        println("  a = 10");
+        println("  int b = 20");
+        println("  c = a + b");
+        println("  swap(a, b)");
+        println();
+        println("Type Conversion:");
+        println("  string numStr = \"123\"");
+        println("  int num = int(numStr)    # Convert string to int");
+        println("  int(numStr)              # Inline conversion");
         println();
         println("Method Call:");
-        println("  use(Sys.print(\"Hello\"))");
+        println("  use(Sys.printl(\"Hello\"))");
         println("  use(Time.wait(1000))");
     }
 
-    // 大道至简
+    private static void handleLibCreateCommand(String[] args) {
+        if (args.length < 3) {
+            println("Usage: vast lib create <library-name>");
+            return;
+        }
+
+        String libName = args[2];
+        String targetDir = "./" + libName;
+
+        try {
+            // 创建目录结构
+            java.nio.file.Files.createDirectories(java.nio.file.Paths.get(targetDir));
+            java.nio.file.Files.createDirectories(java.nio.file.Paths.get(targetDir, "src"));
+
+            // 创建library.properties
+            String props = String.format(
+                    "name=%s\n" +
+                            "version=1.0.0\n" +
+                            "description=A custom Vast library\n" +
+                            "author=Your Name\n" +
+                            "mainClass=com.example.%s.%sLibrary\n" +
+                            "dependencies=\n" +
+                            "config.example=value\n",
+                    libName, libName.toLowerCase(), capitalize(libName)
+            );
+
+            java.nio.file.Files.write(java.nio.file.Paths.get(targetDir, "library.properties"), props.getBytes());
+
+            // 创建示例Java文件
+            String javaCode = String.format(
+                    "package com.example.%s;\n\n" +
+                            "import com.vast.registry.*;\n" +
+                            "import com.vast.vm.VastVM;\n" +
+                            "import java.util.*;\n\n" +
+                            "public class %sLibrary implements VastExternalLibrary {\n\n" +
+                            "    @Override\n" +
+                            "    public LibraryMetadata getMetadata() {\n" +
+                            "        return new LibraryMetadata(\n" +
+                            "            \"%s\", \n" +
+                            "            \"1.0.0\", \n" +
+                            "            \"A custom Vast library\", \n" +
+                            "            \"Your Name\"\n" +
+                            "        );\n" +
+                            "    }\n\n" +
+                            "    @Override\n" +
+                            "    public void initialize(VastVM vm, VastLibraryRegistry registry) {\n" +
+                            "        System.out.println(\"%s library initialized\");\n" +
+                            "    }\n\n" +
+                            "    @Override\n" +
+                            "    public Map<String, Class<?>> getProvidedClasses() {\n" +
+                            "        Map<String, Class<?>> classes = new HashMap<>();\n" +
+                            "        // Register your classes here\n" +
+                            "        // classes.put(\"MyClass\", MyClass.class);\n" +
+                            "        return classes;\n" +
+                            "    }\n\n" +
+                            "    // Add your library methods here\n" +
+                            "    public static void exampleMethod() {\n" +
+                            "        System.out.println(\"Hello from %s library!\");\n" +
+                            "    }\n" +
+                            "}\n",
+                    libName.toLowerCase(), capitalize(libName), libName, libName, libName
+            );
+
+            java.nio.file.Files.write(java.nio.file.Paths.get(targetDir, "src", capitalize(libName) + "Library.java"),
+                    javaCode.getBytes());
+
+            // 创建README
+            String readme = String.format(
+                    "# %s Library\n\n" +
+                            "A custom library for Vast scripting language.\n\n" +
+                            "## Usage\n\n" +
+                            "```vast\n" +
+                            "imp %s\n" +
+                            "// Use your library classes and methods here\n" +
+                            "```\n\n" +
+                            "## Building\n\n" +
+                            "1. Compile the Java source\n" +
+                            "2. Package as .jar file\n" +
+                            "3. Place in vast_libs directory or current directory\n",
+                    libName, libName
+            );
+
+            java.nio.file.Files.write(java.nio.file.Paths.get(targetDir, "README.md"), readme.getBytes());
+
+            println("@ Library template created: " + targetDir);
+            println("@ Next steps:");
+            println("  1. Edit library.properties");
+            println("  2. Implement your library class");
+            println("  3. Package as .jar or .zip");
+            println("  4. Use with: imp " + libName);
+
+        } catch (Exception e) {
+            println("Failed to create library template: " + e.getMessage());
+        }
+    }
+
+    private static void handleLibListCommand() {
+        com.vast.registry.VastLibraryRegistry registry = com.vast.registry.VastLibraryRegistry.getInstance();
+        java.util.Set<String> libraries = registry.getRegisteredLibraryIds();
+
+        println("@ Available Libraries:");
+        if (libraries.isEmpty()) {
+            println("  No libraries registered");
+        } else {
+            libraries.forEach(lib -> println("  - " + lib));
+        }
+    }
+
+    private static void handleLibInfoCommand(String[] args) {
+        if (args.length < 3) {
+            println("Usage: vast lib info <library-name>");
+            return;
+        }
+
+        String libName = args[2];
+        com.vast.registry.VastLibraryRegistry registry = com.vast.registry.VastLibraryRegistry.getInstance();
+
+        if (registry.isLibraryLoaded(libName)) {
+            com.vast.registry.VastExternalLibrary lib = registry.getLoadedLibrary(libName);
+            println("@ Library Info: " + libName);
+            println("  Metadata: " + lib.getMetadata());
+            println("  Provided Classes: " + lib.getProvidedClasses().keySet());
+        } else {
+            println("Library not loaded: " + libName);
+        }
+    }
+
+    private static String capitalize(String str) {
+        if (str == null || str.isEmpty()) return str;
+        return str.substring(0, 1).toUpperCase() + str.substring(1).toLowerCase();
+    }
+
+    // 辅助方法
+    private static void clearScreen() {
+        System.out.print("\033[H\033[2J");
+        System.out.flush();
+    }
+
     private static void println(String text) {
         System.out.println(text);
     }
@@ -574,5 +500,4 @@ public class VastCLI {
     private static void println() {
         System.out.println();
     }
-
 }

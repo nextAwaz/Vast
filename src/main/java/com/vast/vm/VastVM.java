@@ -39,10 +39,8 @@ public class VastVM {//Vast 虚拟机核心类
         // 注册内置类
         BUILTIN_CLASSES.put("Sys", com.vast.internal.Sys.class);
         BUILTIN_CLASSES.put("Time", com.vast.internal.TimeUtil.class);
-        BUILTIN_CLASSES.put("Array", com.vast.internal.ArrayUtil.class);
         BUILTIN_CLASSES.put("Ops", com.vast.internal.Ops.class);
         BUILTIN_CLASSES.put("DataType", com.vast.internal.DataType.class);
-        BUILTIN_CLASSES.put("EncodingUtil", com.vast.internal.EncodingUtil.class);
         BUILTIN_CLASSES.put("EnhancedInput", Input.class);
     }
 
@@ -64,16 +62,14 @@ public class VastVM {//Vast 虚拟机核心类
         // 初始化全局变量
         initializeGlobalVariables();
     }
-    public void setDebugLevel(Debugger.Level level) {
-        debugger.setLevel(level);
-        if (level != Debugger.Level.BASIC) {
-            debugger.logBasic("Debug mode enabled: " + level);
-        }
-    }
 
+    public void setDebugMode(boolean debug) {
+        debugger.setShowStackTrace(debug);
+    }
     public Debugger getDebugger() {
         return debugger;
     }
+
 
     public static void registerClass(String className, Class<?> clazz) {
         BUILTIN_CLASSES.put(className, clazz);
@@ -102,10 +98,8 @@ public class VastVM {//Vast 虚拟机核心类
     public Object executeWithResult(List<String> sourceLines) throws Exception {
         String source = String.join("\n", sourceLines);
 
-        if (debugMode) {
-            System.out.println("@ Source code:");
-            System.out.println(source);
-            System.out.println("@ End source code");
+        if (debugger.isShowStackTrace()) {
+            debugger.debug("Source code:\n" + source);
         }
 
         try {
@@ -113,21 +107,20 @@ public class VastVM {//Vast 虚拟机核心类
             Lexer lexer = new Lexer(source);
             List<Token> tokens = lexer.scanTokens();
 
-            if (debugMode) {
-                System.out.println("@ Tokens:");
-                tokens.forEach(System.out::println);
+            if (debugger.isShowStackTrace()) {
+                debugger.debug("Tokens:");
+                tokens.forEach(token -> debugger.debug("  " + token));
             }
 
             // 语法分析
             Parser parser = new Parser(tokens);
             Program program = parser.parseProgram();
 
-            if (debugMode) {
-                System.out.println("@ AST:");
-                System.out.println(program);
+            if (debugger.isShowStackTrace()) {
+                debugger.debug("AST:\n" + program);
             }
 
-            // 使用解释器执行 - 传入 this
+            // 使用解释器执行
             Interpreter interpreter = new Interpreter(this);
             interpreter.interpret(program);
 
@@ -136,14 +129,13 @@ public class VastVM {//Vast 虚拟机核心类
             return getLastResult();
 
         } catch (VastExceptions.VastRuntimeException e) {
-            // 只输出用户友好的错误信息，不输出堆栈跟踪
-            System.err.println(e.getUserFriendlyMessage());
+            // 只输出用户友好的错误信息，调试模式显示堆栈
+            debugger.error(e.getUserFriendlyMessage(), e);
             throw e;
         } catch (Exception e) {
-            // 简化未知异常的处理
             VastExceptions.UnknownVastException vastException =
                     new VastExceptions.UnknownVastException("Unexpected error during execution", e);
-            System.err.println(vastException.getUserFriendlyMessage());
+            debugger.error(vastException.getUserFriendlyMessage(), e);
             throw vastException;
         }
     }

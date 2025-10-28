@@ -5,7 +5,6 @@ import com.vast.ast.statements.*;
 
 /**
  * AST 访问者接口
- * 用于实现不同的 AST 处理逻辑（类型检查、代码生成、解释执行等）
  */
 public interface ASTVisitor<T> {
     // 表达式访问方法
@@ -18,9 +17,8 @@ public interface ASTVisitor<T> {
     T visitFunctionCallExpression(FunctionCallExpression expr);
     T visitMethodCallExpression(MethodCallExpression expr);
     T visitTypeCastExpression(TypeCastExpression expr);
-
     T visitFractionExpression(FractionExpression expr);
-    T visitBitwiseExpression(BitwiseExpression expr);//按位运算
+    T visitBitwiseExpression(BitwiseExpression expr);
 
     // 语句访问方法
     T visitVariableDeclaration(VariableDeclaration stmt);
@@ -30,8 +28,9 @@ public interface ASTVisitor<T> {
     T visitLoopStatement(LoopStatement stmt);
     T visitUseStatement(UseStatement stmt);
     T visitSwapStatement(SwapStatement stmt);
+    T visitInlineTypeCastStatement(InlineTypeCastStatement stmt); // 新增
 
-    //处理未知节点类型
+    // 处理未知节点类型
     default T visit(ASTNode node) {
         return node.accept(this);
     }

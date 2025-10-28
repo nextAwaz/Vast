@@ -8,28 +8,22 @@ public class VariableDeclaration extends Statement {
     private final String variableName;
     private final String typeHint; // 存储类型信息
     private final Expression initialValue;
-    private final boolean hasExplicitCast;
+    private final boolean isTypeCast; // 是否是类型转换声明
 
     public VariableDeclaration(String variableName, String typeHint,
-                               Expression initialValue, boolean hasExplicitCast,
+                               Expression initialValue, boolean isTypeCast,
                                int lineNumber, int columnNumber) {
         super(lineNumber, columnNumber);
         this.variableName = variableName;
         this.typeHint = typeHint;
         this.initialValue = initialValue;
-        this.hasExplicitCast = hasExplicitCast;
-    }
-
-    // 旧构造函数，保持兼容性
-    public VariableDeclaration(String variableName, String typeHint,
-                               Expression initialValue, int lineNumber, int columnNumber) {
-        this(variableName, typeHint, initialValue, false, lineNumber, columnNumber);
+        this.isTypeCast = isTypeCast;
     }
 
     public String getVariableName() { return variableName; }
     public String getTypeHint() { return typeHint; }
     public Expression getInitialValue() { return initialValue; }
-    public boolean hasExplicitCast() { return hasExplicitCast; }
+    public boolean isTypeCast() { return isTypeCast; }
 
     @Override
     public <T> T accept(ASTVisitor<T> visitor) {
@@ -38,11 +32,10 @@ public class VariableDeclaration extends Statement {
 
     @Override
     public String toString() {
-        if (typeHint != null) {
-            return typeHint + " " + variableName +
-                    (initialValue != null ? " = " + initialValue : "");
+        if (isTypeCast) {
+            return typeHint + " " + variableName + " = " + typeHint + "(" + initialValue + ")";
         } else {
-            return "var " + variableName +
+            return typeHint + " " + variableName +
                     (initialValue != null ? " = " + initialValue : "");
         }
     }

@@ -1,9 +1,9 @@
 package com.vast.internal;
 
-// 数据类型操作类，包含字符串、数字、布尔、数组等常用操作方法
+// 简化数据类型操作类，移除数组功能
 public class DataType {
 
-    // 字符串操作
+    // 字符串操作 - 保留基本功能
     public static int strLength(String str) {
         return str != null ? str.length() : 0;
     }
@@ -36,29 +36,13 @@ public class DataType {
         return str != null ? str.trim() : "";
     }
 
-    // 数字操作 - 替代原来的 Math 类功能
+    // 数字操作 - 简化实现
     public static int numParseInt(String str) {
         try {
             return Integer.parseInt(str);
         } catch (NumberFormatException e) {
             return 0;
         }
-    }
-
-    // 幂运算方法
-    public static double numPower(double base, double exponent) {
-        return Math.pow(base, exponent);
-    }
-
-    public static int numIntPower(int base, int exponent) {
-        if (exponent < 0) {
-            throw new IllegalArgumentException("Exponent must be non-negative for integer power");
-        }
-        int result = 1;
-        for (int i = 0; i < exponent; i++) {
-            result *= base;
-        }
-        return result;
     }
 
     public static double numParseDouble(String str) {
@@ -69,47 +53,7 @@ public class DataType {
         }
     }
 
-    public static int numAbs(int value) {
-        return Math.abs(value);
-    }
-
-    public static double numAbs(double value) {
-        return Math.abs(value);
-    }
-
-    public static int numMax(int a, int b) {
-        return a > b ? a : b;
-    }
-
-    public static int numMin(int a, int b) {
-        return a < b ? a : b;
-    }
-
-    public static long numRound(double value) {
-        return Math.round(value);
-    }
-
-    public static double numCeil(double value) {
-        return Math.ceil(value);
-    }
-
-    public static double numFloor(double value) {
-        return Math.floor(value);
-    }
-
-    public static double numSqrt(double value) {
-        return Math.sqrt(value);
-    }
-
-    public static double numPow(double base, double exponent) {
-        return Math.pow(base, exponent);
-    }
-
-    public static int numRandom(int max) {
-        return (int) (Math.random() * max);
-    }
-
-    // 布尔操作
+    // 布尔操作 - 简化
     public static boolean boolParse(String str) {
         return "true".equalsIgnoreCase(str) || "1".equals(str);
     }
@@ -118,30 +62,13 @@ public class DataType {
         return value ? "true" : "false";
     }
 
-    public static boolean boolAnd(boolean a, boolean b) {
-        return a && b;
-    }
-
-    public static boolean boolOr(boolean a, boolean b) {
-        return a || b;
-    }
-
-    public static boolean boolNot(boolean a) {
-        return !a;
-    }
-
-    public static boolean boolXor(boolean a, boolean b) {
-        return a != b;
-    }
-
-    // 类型检查和转换
+    // 类型检查和转换 - 简化
     public static String typeOf(Object obj) {
         if (obj == null) return "null";
         if (obj instanceof String) return "string";
         if (obj instanceof Integer) return "number";
         if (obj instanceof Double) return "number";
         if (obj instanceof Boolean) return "boolean";
-        if (obj instanceof Object[]) return "array";
         return "object";
     }
 
@@ -182,50 +109,5 @@ public class DataType {
         if (obj instanceof Number) return ((Number) obj).doubleValue() != 0;
         if (obj instanceof String) return !((String) obj).isEmpty();
         return obj != null;
-    }
-
-    // 数组操作
-    public static int arrLength(Object[] array) {
-        return array != null ? array.length : 0;
-    }
-
-    public static boolean arrContains(Object[] array, Object value) {
-        if (array == null) return false;
-        for (Object item : array) {
-            if (eq(item, value)) return true;
-        }
-        return false;
-    }
-
-    public static Object[] arrCreate(int size) {
-        return new Object[size];
-    }
-
-    public static Object arrGet(Object[] array, int index) {
-        if (array == null || index < 0 || index >= array.length) {
-            return null;
-        }
-        return array[index];
-    }
-
-    public static void arrSet(Object[] array, int index, Object value) {
-        if (array != null && index >= 0 && index < array.length) {
-            array[index] = value;
-        }
-    }
-
-    public static Object[] arrSlice(Object[] array, int start, int end) {
-        if (array == null) return new Object[0];
-        if (start < 0) start = 0;
-        if (end > array.length) end = array.length;
-        if (start >= end) return new Object[0];
-
-        Object[] result = new Object[end - start];
-        System.arraycopy(array, start, result, 0, end - start);
-        return result;
-    }
-
-    private static boolean eq(Object a, Object b) {
-        return a == b || (a != null && a.equals(b));
     }
 }
