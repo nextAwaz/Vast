@@ -1,6 +1,7 @@
 package com.vast;
 
 import com.vast.Vast;
+import com.vast.internal.exception.VastExceptions;
 import com.vast.vm.VastVM;
 
 import java.io.IOException;
@@ -11,7 +12,7 @@ import java.util.List;
 import java.util.Scanner;
 
 public class VastCLI {
-    static String ver = "0.1.2(hotfix-2)"; //版本信息
+    static String ver = "0.1.2(hotfix-3)"; //版本信息
 
     public static void main(String[] args) {
         if (args.length == 0) {
@@ -97,17 +98,20 @@ public class VastCLI {
         }
     }
 
-    // 移除handleEvalCommand方法
-
     private static void handleShellCommand() {
         println("@ Vast Interactive Shell");
         println("Type 'exit' or 'quit' to exit");
         println("Type 'clear' to clear screen");
+        println("Type 'reset' to reset VM state");
         println("Type 'debug on/off' to toggle stack traces");
         println("=".repeat(50));
 
         Scanner scanner = new Scanner(System.in);
         boolean debugMode = false;
+
+        // 创建单个 VM 实例，在整个 shell 会话中保持
+        VastVM vm = new VastVM();
+        vm.setDebugMode(debugMode);
 
         while (true) {
             System.out.print("vast> ");
@@ -121,6 +125,13 @@ public class VastCLI {
                 clearScreen();
                 continue;
             }
+            if (input.equalsIgnoreCase("reset")) {
+                // 重置 VM 状态
+                vm = new VastVM();
+                vm.setDebugMode(debugMode);
+                println("@ VM state reset");
+                continue;
+            }
             if (input.equalsIgnoreCase("help")) {
                 printShellHelp();
                 continue;
@@ -131,9 +142,11 @@ public class VastCLI {
                 String mode = input.substring(6).toLowerCase();
                 if ("on".equals(mode) || "true".equals(mode)) {
                     debugMode = true;
+                    vm.setDebugMode(true);
                     println("@ Debug mode ON - showing stack traces");
                 } else if ("off".equals(mode) || "false".equals(mode)) {
                     debugMode = false;
+                    vm.setDebugMode(false);
                     println("@ Debug mode OFF");
                 } else {
                     println("@ Usage: debug on/off");
@@ -142,14 +155,19 @@ public class VastCLI {
             }
 
             try {
-                // 在shell中直接使用VastVM执行单行代码
-                VastVM vm = new VastVM();
-                vm.setDebugMode(debugMode);
+                // 使用同一个 VM 实例执行
                 vm.execute(List.of(input));
             } catch (Exception e) {
                 System.err.println("Error: " + e.getMessage());
                 if (debugMode) {
                     e.printStackTrace();
+                }
+
+                // 如果发生严重错误，自动重置 VM
+                if (e instanceof VastExceptions.VastRuntimeException) {
+                    println("@ Auto-resetting VM due to runtime error");
+                    vm = new VastVM();
+                    vm.setDebugMode(debugMode);
                 }
             }
         }
@@ -309,11 +327,13 @@ public class VastCLI {
         println("Shell Commands:");
         println("  exit, quit  - Exit shell");
         println("  clear       - Clear screen");
+        println("  reset       - Reset VM state (variables, imports, etc.)");
         println("  debug on/off - Toggle stack traces");
         println();
         println("You can type any Vast code directly:");
         println("  var x = 10");
-        println("  var y = x * 2");
+        println("  int y = 20");
+        println("  printl(x + y)");
         println("  swap(x, y)");
     }
 
@@ -489,8 +509,19 @@ public class VastCLI {
 
     // 辅助方法
     private static void clearScreen() {
-        System.out.print("\033[H\033[2J");
-        System.out.flush();
+        try {
+            if (System.getProperty("os.name").contains("Windows")) {
+                new ProcessBuilder("cmd", "/c", "cls").inheritIO().start().waitFor();
+            } else {
+                System.out.print("\033[H\033[2J");
+                System.out.flush();
+            }
+        } catch (Exception e) {
+            // 备用清屏方法
+            for (int i = 0; i < 50; i++) {
+                System.out.println();
+            }
+        }
     }
 
     private static void println(String text) {

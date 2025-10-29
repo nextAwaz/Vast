@@ -159,15 +159,31 @@ public class VastVM {//Vast 虚拟机核心类
         return lastResult;
     }
 
-    @Deprecated
     public void reset() {
+        // 清理库注册表
+        if (libraryRegistry != null) {
+            libraryRegistry.cleanup();
+        }
+
+        // 重新初始化所有状态
         importedClasses.clear();
         localVariables.clear();
         lastResult = null;
-        debugMode = false;
 
         // 重新初始化全局变量
         initializeGlobalVariables();
+
+        // 重新导入内置类
+        for (Map.Entry<String, Class<?>> entry : BUILTIN_CLASSES.entrySet()) {
+            importedClasses.put(entry.getKey(), entry.getValue());
+        }
+
+        // 重新扫描和加载库
+        if (libraryLoader != null) {
+            libraryLoader.scanAndLoadAvailableLibraries(this);
+        }
+
+        debugger.log("@ VM state has been reset");
     }
 
     public static Map<String, Class<?>> getBuiltinClasses() {

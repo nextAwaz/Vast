@@ -114,11 +114,17 @@ public class Interpreter implements ASTVisitor<Void> {
 
     public void interpret(Program program) {
         try {
-            debugger.debug("Starting program parsing"); // 改为 debug
+            debugger.debug("Starting program parsing");
             program.accept(this);
-            debugger.debug("Program parsed successfully with " + program.getStatements().size() + " statements"); // 改为 debug
+            debugger.debug("Program parsed successfully with " + program.getStatements().size() + " statements");
         } catch (VastExceptions.VastRuntimeException error) {
             debugger.error("Runtime error: " + error.getUserFriendlyMessage());
+
+            // 对于某些严重错误，可能需要部分重置
+            if (error instanceof VastExceptions.ExhaustedResourcesException) {
+                debugger.warning("Resource exhaustion detected, consider using 'reset' command");
+            }
+
             throw error;
         }
     }
@@ -246,14 +252,14 @@ public class Interpreter implements ASTVisitor<Void> {
         String varName = stmt.getVariableName();
         String typeHint = stmt.getTypeHint();
 
-        debugger.log("Variable declaration: " + varName +
+        debugger.debug("Variable declaration: " + varName +  // 改为 debug
                 ", type: " + typeHint + ", initial value: " + value +
                 (stmt.isTypeCast() ? " (type cast)" : ""));
 
         // 强类型变量声明
         if (typeHint != null) {
             variableTypes.put(varName, typeHint);
-            debugger.log("Registered type constraint: " + varName + " -> " + typeHint);
+            debugger.debug("Registered type constraint: " + varName + " -> " + typeHint); // 改为 debug
 
             // 严格验证初始值的类型
             if (value != null) {
@@ -264,7 +270,7 @@ public class Interpreter implements ASTVisitor<Void> {
 
         variables.put(varName, value);
         this.lastResult = value;
-        debugger.log("Var declared: " + varName + " = " + value +
+        debugger.debug("Var declared: " + varName + " = " + value +  // 改为 debug
                 (typeHint != null ? " (type: " + typeHint + ")" : ""));
         return null;
     }
