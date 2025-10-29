@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Scanner;
 
 public class VastCLI {
-    static String ver = "0.1.2(hotfix-4)"; //版本信息
+    static String ver = "0.1.2(hotfix-5)"; //版本信息
 
     public static void main(String[] args) {
         if (args.length == 0) {
@@ -154,8 +154,15 @@ public class VastCLI {
             }
 
             try {
-                // 使用同一个 VM 实例执行
-                vm.execute(List.of(input));
+                // 检查是否是纯数学表达式（不包含语句关键字）
+                if (isMathExpression(input)) {
+                    // 将表达式包装成 printl 语句
+                    String wrappedInput = "printl(" + input + ")";
+                    vm.execute(List.of(wrappedInput));
+                } else {
+                    // 正常执行
+                    vm.execute(List.of(input));
+                }
             } catch (Exception e) {
                 System.err.println("Error: " + e.getMessage());
                 if (debugMode) {
@@ -171,6 +178,56 @@ public class VastCLI {
 
         scanner.close();
         System.out.println("@ Goodbye!");
+    }
+
+    /**
+     * 检查输入是否是纯数学表达式
+     */
+    private static boolean isMathExpression(String input) {
+        if (input == null || input.trim().isEmpty()) {
+            return false;
+        }
+
+        String trimmed = input.trim();
+
+        // 检查是否包含语句关键字（不是数学表达式）
+        String[] statementKeywords = {
+                "imp ", "loop", "use(", "swap(", "var ", "int ", "string ", "bool ",
+                "double ", "float ", "char ", "if ", "else", "while", "for "
+        };
+
+        for (String keyword : statementKeywords) {
+            if (trimmed.startsWith(keyword)) {
+                return false;
+            }
+        }
+
+        // 检查是否是赋值表达式（包含等号但不是比较操作）
+        if (trimmed.contains("=")) {
+            // 如果是比较操作（==），允许作为数学表达式
+            if (trimmed.contains("==") || trimmed.contains("!=") ||
+                    trimmed.contains(">=") || trimmed.contains("<=")) {
+                return true;
+            }
+            // 否则是赋值操作，不是纯数学表达式
+            return false;
+        }
+
+        // 检查是否看起来像数学表达式（包含运算符或数字）
+        boolean hasMathOperators = trimmed.matches(".*[+\\-*/%&|^~<>].*");
+        boolean hasNumbers = trimmed.matches(".*\\d.*");
+        boolean hasVariables = trimmed.matches(".*[a-zA-Z_].*");
+        boolean hasParentheses = trimmed.contains("(") || trimmed.contains(")");
+
+        // 如果是简单的变量引用，也当作数学表达式处理
+        if (!hasMathOperators && !hasNumbers && hasVariables && !hasParentheses) {
+            return true;
+        }
+
+        // 包含数学运算符或数字，且不包含语句特征
+        return (hasMathOperators || hasNumbers) &&
+                !trimmed.endsWith(":") && // 不是代码块
+                !trimmed.contains("{");
     }
 
     // 修改printUsage方法 - 移除eval相关说明
