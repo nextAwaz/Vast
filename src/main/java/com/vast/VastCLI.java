@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.Scanner;
 
 public class VastCLI {
-    static String ver = "0.1.2(hotfix-1)"; //版本信息
+    static String ver = "0.1.2(hotfix-2)"; //版本信息
 
     public static void main(String[] args) {
         if (args.length == 0) {

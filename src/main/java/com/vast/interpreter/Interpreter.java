@@ -9,13 +9,9 @@ import com.vast.registry.VastLibraryLoader;
 import com.vast.vm.VastVM;
 import com.vast.internal.exception.VastExceptions;
 
+import java.lang.reflect.Array;
 import java.lang.reflect.Method;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.List;
-import java.util.ArrayList;
-import java.util.Set;
-import java.util.HashSet;
+import java.util.*;
 
 // 解释器类，负责执行AST节点
 public class Interpreter implements ASTVisitor<Void> {
@@ -71,7 +67,7 @@ public class Interpreter implements ASTVisitor<Void> {
             if (classes.size() == 1) {
                 // 方法名唯一，添加到映射
                 staticMethodToClass.put(methodName, classes.iterator().next());
-                debugger.error("Static method '" + methodName + "' uniquely mapped to class: " + classes.iterator().next());
+                debugger.debug("Static method '" + methodName + "' uniquely mapped to class: " + classes.iterator().next());
             } else {
                 // 方法名冲突，记录冲突信息
                 methodConflicts.put(methodName, classes);
@@ -102,7 +98,9 @@ public class Interpreter implements ASTVisitor<Void> {
      */
     private String resolveClassNameForMethod(String methodName, int lineNumber, int columnNumber) {
         if (staticMethodToClass.containsKey(methodName)) {
-            return staticMethodToClass.get(methodName);
+            String className = staticMethodToClass.get(methodName);
+            debugger.debug("Resolved method '" + methodName + "' to class: " + className); // 改为 debug
+            return className;
         }
 
         if (methodConflicts.containsKey(methodName)) {
@@ -110,15 +108,18 @@ public class Interpreter implements ASTVisitor<Void> {
                     methodName, methodConflicts.get(methodName), lineNumber, columnNumber);
         }
 
+        debugger.debug("Method '" + methodName + "' not found in static method mapping"); // 改为 debug
         return null; // 方法不存在
     }
 
     public void interpret(Program program) {
         try {
+            debugger.debug("Starting program parsing"); // 改为 debug
             program.accept(this);
+            debugger.debug("Program parsed successfully with " + program.getStatements().size() + " statements"); // 改为 debug
         } catch (VastExceptions.VastRuntimeException error) {
             debugger.error("Runtime error: " + error.getUserFriendlyMessage());
-            throw error; // 重新抛出异常
+            throw error;
         }
     }
 
@@ -462,7 +463,7 @@ public class Interpreter implements ASTVisitor<Void> {
      */
     private Object callInternalMethod(String className, String methodName, Object[] args) {
         try {
-            debugger.log("Calling internal method: " + className + "." + methodName +
+            debugger.debug("Calling internal method: " + className + "." + methodName + // 改为 debug
                     " with " + args.length + " arguments");
 
             Class<?> clazz = findClass(className);
@@ -472,18 +473,123 @@ public class Interpreter implements ASTVisitor<Void> {
 
             Method method = findBestMethod(clazz, methodName, args);
             if (method == null) {
+                // 提供更详细的错误信息
+                debugger.error("Method not found: " + className + "." + methodName +
+                        " with " + args.length + " arguments");
+                debugger.error("Argument types: " + Arrays.toString(
+                        Arrays.stream(args).map(arg -> arg != null ? arg.getClass().getSimpleName() : "null").toArray()
+                ));
+
+                // 列出所有可用的方法
+                Method[] allMethods = clazz.getMethods();
+                List<String> availableMethods = new ArrayList<>();
+                for (Method m : allMethods) {
+                    if (m.getName().equals(methodName)) {
+                        availableMethods.add(methodName + Arrays.toString(m.getParameterTypes()));
+                    }
+                }
+                if (!availableMethods.isEmpty()) {
+                    debugger.error("Available overloads: " + availableMethods);
+                }
+
                 throw VastExceptions.NonExistentObject.methodNotFound(className, methodName);
             }
 
-            Object result = method.invoke(null, args);
-            debugger.log("Method call result: " + result);
+            // 处理可变参数
+            Object[] convertedArgs = convertArgumentsForMethod(method, args);
+
+            Object result = method.invoke(null, convertedArgs);
+            debugger.debug("Method call result: " + result);
             return result;
 
         } catch (VastExceptions.VastRuntimeException e) {
             throw e;
         } catch (Exception e) {
+            debugger.error("Failed to call method " + className + "." + methodName + ": " + e.getMessage());
+            if (debugger.isShowStackTrace()) {
+                e.printStackTrace();
+            }
             throw new VastExceptions.UnknownVastException("Failed to call method " + className + "." + methodName, e);
         }
+    }
+
+    /**
+     * 转换参数以匹配方法签名
+     */
+    private Object[] convertArgumentsForMethod(Method method, Object[] args) {
+        Class<?>[] paramTypes = method.getParameterTypes();
+        boolean isVarArgs = method.isVarArgs();
+
+        if (!isVarArgs) {
+            // 非可变参数方法，直接转换每个参数
+            Object[] converted = new Object[args.length];
+            for (int i = 0; i < args.length; i++) {
+                converted[i] = convertArgument(args[i], paramTypes[i]);
+            }
+            return converted;
+        } else {
+            // 可变参数方法
+            // 固定参数个数
+            int fixedParams = paramTypes.length - 1;
+            // 检查参数个数是否足够
+            if (args.length < fixedParams) {
+                throw new VastExceptions.NotGrammarException("Insufficient arguments for method: " + method.getName());
+            }
+
+            Object[] converted = new Object[paramTypes.length];
+            // 转换固定参数
+            for (int i = 0; i < fixedParams; i++) {
+                converted[i] = convertArgument(args[i], paramTypes[i]);
+            }
+
+            // 处理可变参数
+            Class<?> varArgType = paramTypes[fixedParams].getComponentType();
+            int varArgCount = args.length - fixedParams;
+            Object varArgsArray = Array.newInstance(varArgType, varArgCount);
+            for (int i = 0; i < varArgCount; i++) {
+                Array.set(varArgsArray, i, convertArgument(args[fixedParams + i], varArgType));
+            }
+            converted[fixedParams] = varArgsArray;
+
+            return converted;
+        }
+    }
+
+    /**
+     * 转换单个参数
+     */
+    private Object convertArgument(Object arg, Class<?> targetType) {
+        if (arg == null) {
+            return null;
+        }
+
+        if (targetType.isInstance(arg)) {
+            return arg;
+        }
+
+        // 处理常见的类型转换
+        if (targetType == String.class) {
+            return arg.toString();
+        }
+
+        if (targetType == Integer.class || targetType == int.class) {
+            if (arg instanceof Number) {
+                return ((Number) arg).intValue();
+            } else if (arg instanceof String) {
+                return Integer.parseInt((String) arg);
+            }
+        }
+
+        if (targetType == Double.class || targetType == double.class) {
+            if (arg instanceof Number) {
+                return ((Number) arg).doubleValue();
+            } else if (arg instanceof String) {
+                return Double.parseDouble((String) arg);
+            }
+        }
+
+        // 如果无法转换，返回原值（让反射处理）
+        return arg;
     }
 
     /**
@@ -514,31 +620,77 @@ public class Interpreter implements ASTVisitor<Void> {
      */
     private Method findBestMethod(Class<?> clazz, String methodName, Object[] args) {
         Method[] methods = clazz.getMethods();
+        List<Method> candidateMethods = new ArrayList<>();
 
+        // 第一步：收集所有同名方法
         for (Method method : methods) {
-            if (method.getName().equals(methodName) && isMethodCompatible(method, args)) {
-                return method;
+            if (method.getName().equals(methodName)) {
+                candidateMethods.add(method);
             }
         }
-        return null;
+
+        if (candidateMethods.isEmpty()) {
+            return null;
+        }
+
+        // 第二步：寻找最匹配的方法
+        Method bestMethod = null;
+        int bestScore = Integer.MAX_VALUE;
+
+        for (Method method : candidateMethods) {
+            int score = calculateMethodMatchScore(method, args);
+            if (score >= 0 && score < bestScore) {
+                bestScore = score;
+                bestMethod = method;
+            }
+        }
+
+        return bestMethod;
     }
 
-    /**
-     * 检查方法兼容性
-     */
-    private boolean isMethodCompatible(Method method, Object[] args) {
+    private int calculateMethodMatchScore(Method method, Object[] args) {
         Class<?>[] paramTypes = method.getParameterTypes();
+        boolean isVarArgs = method.isVarArgs();
 
-        if (paramTypes.length != args.length) {
-            return false;
-        }
-
-        for (int i = 0; i < paramTypes.length; i++) {
-            if (!isTypeCompatible(paramTypes[i], args[i])) {
-                return false;
+        // 如果不是可变参数方法，参数个数必须完全匹配
+        if (!isVarArgs) {
+            if (paramTypes.length != args.length) {
+                return -1;
+            }
+        } else {
+            // 可变参数方法：参数个数必须至少是固定参数个数
+            if (args.length < paramTypes.length - 1) {
+                return -1;
             }
         }
-        return true;
+
+        int score = 0;
+        // 匹配固定参数
+        int i = 0;
+        for (; i < paramTypes.length - (isVarArgs ? 1 : 0); i++) {
+            if (!isTypeCompatible(paramTypes[i], args[i])) {
+                return -1;
+            }
+            // 计算类型转换代价（简单起见，这里我们只计算是否需要转换，0表示完全匹配，1表示需要转换）
+            if (args[i] != null && !paramTypes[i].equals(args[i].getClass())) {
+                score += 1;
+            }
+        }
+
+        // 匹配可变参数
+        if (isVarArgs) {
+            Class<?> varArgType = paramTypes[paramTypes.length - 1].getComponentType();
+            for (; i < args.length; i++) {
+                if (!isTypeCompatible(varArgType, args[i])) {
+                    return -1;
+                }
+                if (args[i] != null && !varArgType.equals(args[i].getClass())) {
+                    score += 1;
+                }
+            }
+        }
+
+        return score;
     }
 
     /**
@@ -547,14 +699,34 @@ public class Interpreter implements ASTVisitor<Void> {
     private boolean isTypeCompatible(Class<?> paramType, Object arg) {
         if (arg == null) return !paramType.isPrimitive();
 
+        // 对于 Object 类型，接受任何参数
+        if (paramType == Object.class) {
+            return true;
+        }
+
+        // 对于可变参数的元素类型，同样宽松处理
+        if (paramType.isArray() && arg != null) {
+            // 简化处理：如果参数是数组且可变参数元素类型是 Object，接受任何数组
+            Class<?> componentType = paramType.getComponentType();
+            if (componentType == Object.class) {
+                return true;
+            }
+        }
+
         if (paramType.isPrimitive()) {
             return (paramType == int.class && arg instanceof Integer) ||
                     (paramType == boolean.class && arg instanceof Boolean) ||
                     (paramType == double.class && arg instanceof Double) ||
-                    (paramType == long.class && arg instanceof Long);
+                    (paramType == long.class && arg instanceof Long) ||
+                    (paramType == float.class && arg instanceof Float) ||
+                    (paramType == char.class && arg instanceof Character) ||
+                    (paramType == byte.class && arg instanceof Byte) ||
+                    (paramType == short.class && arg instanceof Short);
         }
 
-        return paramType.isInstance(arg);
+        return paramType.isInstance(arg) ||
+                (paramType == String.class && arg instanceof String) ||
+                (Number.class.isAssignableFrom(paramType) && arg instanceof Number);
     }
 
     /**
@@ -697,7 +869,7 @@ public class Interpreter implements ASTVisitor<Void> {
             // 检查是否是唯一的静态方法名
             String className = resolveClassNameForMethod(name, expr.getLineNumber(), expr.getColumnNumber());
             if (className != null) {
-                debugger.log("Variable expression resolved as static method: " + name + " -> " + className);
+                debugger.debug("Variable expression resolved as static method: " + name + " -> " + className); // 改为 debug
                 return name; // 返回方法名字符串，在函数调用中处理
             }
 
@@ -784,7 +956,7 @@ public class Interpreter implements ASTVisitor<Void> {
                         expr.getLineNumber(), expr.getColumnNumber());
 
                 if (className != null) {
-                    debugger.log("Resolved method '" + methodName + "' to class: " + className);
+                    debugger.debug("Resolved method '" + methodName + "' to class: " + className); // 改为 debug
                     return callInternalMethod(className, methodName, args);
                 }
             }
@@ -1370,6 +1542,10 @@ public class Interpreter implements ASTVisitor<Void> {
                 "Cannot convert " + getValueType(value) + " to char",
                 lineNumber, columnNumber
         );
+    }
+
+    private boolean isVarArgsMethod(Method method) {
+        return method.isVarArgs();
     }
 
     // 静态方法引用辅助类

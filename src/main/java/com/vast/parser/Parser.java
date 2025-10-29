@@ -26,7 +26,7 @@ public class Parser {
      */
     public Program parseProgram() {
         List<Statement> statements = new ArrayList<>();
-        debugger.log("Starting program parsing");
+        debugger.debug("Starting program parsing"); // 改为 debug
 
         while (!isAtEnd()) {
             // 跳过换行符
@@ -45,7 +45,7 @@ public class Parser {
             match("NEWLINE");
         }
 
-        debugger.log("Program parsed successfully with " + statements.size() + " statements");
+        debugger.debug("Program parsed successfully with " + statements.size() + " statements"); // 改为 debug
         return new Program(statements);
     }
 
