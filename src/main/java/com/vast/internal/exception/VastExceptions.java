@@ -1,5 +1,6 @@
 package com.vast.internal.exception;
 
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -277,8 +278,8 @@ public class VastExceptions {
             super("Target object does not exist");
         }
 
-        public NonExistentObject(String message) {
-            super(message);
+        public NonExistentObject(String customMessage) {
+            super(customMessage);
         }
 
         public NonExistentObject(String message, Throwable cause) {
@@ -345,6 +346,25 @@ public class VastExceptions {
         // 新增构造函数，用于处理两个字符串参数的情况
         public NotGrammarException(String context, String details) {
             super("Syntax error in " + context + ": " + details);
+        }
+
+        public static NotGrammarException withSuggestion(String context, String actual,
+                                                         List<String> suggestions) {
+            StringBuilder message = new StringBuilder();
+            message.append("Syntax error in ").append(context).append(": '").append(actual).append("'");
+
+            if (!suggestions.isEmpty()) {
+                message.append(". Did you mean: ");
+                for (int i = 0; i < suggestions.size(); i++) {
+                    if (i > 0) {
+                        message.append(i == suggestions.size() - 1 ? " or " : ", ");
+                    }
+                    message.append("'").append(suggestions.get(i)).append("'");
+                }
+                message.append("?");
+            }
+
+            return new NotGrammarException(message.toString());
         }
 
         // 参数数量不匹配的异常

@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Scanner;
 
 public class VastCLI {
-    static String ver = "0.1.2(hotfix-3)"; //版本信息
+    static String ver = "0.1.2(hotfix-4)"; //版本信息
 
     public static void main(String[] args) {
         if (args.length == 0) {
@@ -127,8 +127,7 @@ public class VastCLI {
             }
             if (input.equalsIgnoreCase("reset")) {
                 // 重置 VM 状态
-                vm = new VastVM();
-                vm.setDebugMode(debugMode);
+                vm.reset();
                 println("@ VM state reset");
                 continue;
             }
@@ -163,11 +162,9 @@ public class VastCLI {
                     e.printStackTrace();
                 }
 
-                // 如果发生严重错误，自动重置 VM
+                // 对于严重错误，建议用户重置 VM
                 if (e instanceof VastExceptions.VastRuntimeException) {
-                    println("@ Auto-resetting VM due to runtime error");
-                    vm = new VastVM();
-                    vm.setDebugMode(debugMode);
+                    println("@ Use 'reset' command to clear VM state if needed");
                 }
             }
         }

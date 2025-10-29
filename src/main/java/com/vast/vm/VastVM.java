@@ -3,6 +3,7 @@ package com.vast.vm;
 import com.vast.ast.Program;
 import com.vast.internal.Debugger;
 import com.vast.internal.Input;
+import com.vast.internal.SmartErrorSuggestor;
 import com.vast.internal.exception.VastExceptions;
 import com.vast.parser.Lexer;
 import com.vast.parser.Parser;
@@ -28,12 +29,15 @@ public class VastVM {//Vast 虚拟机核心类
     private Object lastResult = null;
     private boolean debugMode = false;
 
+    private final SmartErrorSuggestor errorSuggestor;// 智能错误建议器
+
     // 对于外置库的支持
     private final VastLibraryLoader libraryLoader;
     private final VastLibraryRegistry libraryRegistry;
 
     // 调试器
     private final Debugger debugger;
+    private Interpreter interpreter;
 
     static {
         // 注册内置类
@@ -59,6 +63,10 @@ public class VastVM {//Vast 虚拟机核心类
 
         this.debugger = Debugger.getInstance();
 
+        this.interpreter = new Interpreter(this);// 初始化解释器
+
+        this.errorSuggestor = new SmartErrorSuggestor(this);
+
         // 初始化全局变量
         initializeGlobalVariables();
     }
@@ -68,6 +76,10 @@ public class VastVM {//Vast 虚拟机核心类
     }
     public Debugger getDebugger() {
         return debugger;
+    }
+
+    public SmartErrorSuggestor getErrorSuggestor() {
+        return errorSuggestor;
     }
 
 
@@ -120,8 +132,7 @@ public class VastVM {//Vast 虚拟机核心类
                 debugger.debug("AST:\n" + program);
             }
 
-            // 使用解释器执行
-            Interpreter interpreter = new Interpreter(this);
+            // 使用持久化的解释器执行
             interpreter.interpret(program);
 
             // 获取最后结果
@@ -129,7 +140,6 @@ public class VastVM {//Vast 虚拟机核心类
             return getLastResult();
 
         } catch (VastExceptions.VastRuntimeException e) {
-            // 只输出用户友好的错误信息，调试模式显示堆栈
             debugger.error(e.getUserFriendlyMessage(), e);
             throw e;
         } catch (Exception e) {
@@ -159,24 +169,24 @@ public class VastVM {//Vast 虚拟机核心类
         return lastResult;
     }
 
+    /**
+     * 重置 VM 状态（用于 shell 中的 reset 命令）
+     */
     public void reset() {
-        // 清理库注册表
-        if (libraryRegistry != null) {
-            libraryRegistry.cleanup();
-        }
+        // 创建新的解释器（重置所有状态）
+        this.interpreter = new Interpreter(this);
 
-        // 重新初始化所有状态
+        // 重置其他状态
         importedClasses.clear();
-        localVariables.clear();
         lastResult = null;
-
-        // 重新初始化全局变量
-        initializeGlobalVariables();
 
         // 重新导入内置类
         for (Map.Entry<String, Class<?>> entry : BUILTIN_CLASSES.entrySet()) {
             importedClasses.put(entry.getKey(), entry.getValue());
         }
+
+        // 重新初始化全局变量
+        initializeGlobalVariables();
 
         // 重新扫描和加载库
         if (libraryLoader != null) {

@@ -5,6 +5,7 @@ import com.vast.ast.expressions.*;
 import com.vast.ast.statements.*;
 import com.vast.internal.Debugger;
 import com.vast.internal.Fraction;
+import com.vast.internal.SmartErrorSuggestor;
 import com.vast.registry.VastLibraryLoader;
 import com.vast.vm.VastVM;
 import com.vast.internal.exception.VastExceptions;
@@ -24,9 +25,12 @@ public class Interpreter implements ASTVisitor<Void> {
     private final Map<String, String> staticMethodToClass = new HashMap<>();//静态方法名到类名的映射
     private final Map<String, Set<String>> methodConflicts = new HashMap<>();//方法名冲突记录
 
+    private final SmartErrorSuggestor errorSuggestor;
+
     public Interpreter(VastVM vm) {
         this.vm = vm;
         this.debugger = vm.getDebugger();
+        this.errorSuggestor = vm.getErrorSuggestor(); // 初始化错误提示器
 
         // 初始化日志
         if (debugger.isShowStackTrace()) {
@@ -46,6 +50,12 @@ public class Interpreter implements ASTVisitor<Void> {
      * 初始化静态方法映射，检查方法名冲突
      */
     private void initializeStaticMethodMapping() {
+        // 如果已经初始化过，跳过
+        if (!staticMethodToClass.isEmpty() || !methodConflicts.isEmpty()) {
+            debugger.debug("Static method mapping already initialized, skipping");
+            return;
+        }
+
         // 收集所有类的静态方法
         Map<String, Set<String>> methodToClasses = new HashMap<>();
 
@@ -74,6 +84,8 @@ public class Interpreter implements ASTVisitor<Void> {
                 debugger.warning("Method name conflict: '" + methodName + "' exists in multiple classes: " + classes);
             }
         }
+
+        debugger.debug("Static method mapping initialized with " + staticMethodToClass.size() + " unique methods");
     }
 
     /**
@@ -114,17 +126,15 @@ public class Interpreter implements ASTVisitor<Void> {
 
     public void interpret(Program program) {
         try {
-            debugger.debug("Starting program parsing");
+            debugger.debug("Starting program interpretation");
+
+            // 初始化静态方法映射（如果需要）
+            initializeStaticMethodMapping();
+
             program.accept(this);
-            debugger.debug("Program parsed successfully with " + program.getStatements().size() + " statements");
+            debugger.debug("Program interpretation completed");
         } catch (VastExceptions.VastRuntimeException error) {
             debugger.error("Runtime error: " + error.getUserFriendlyMessage());
-
-            // 对于某些严重错误，可能需要部分重置
-            if (error instanceof VastExceptions.ExhaustedResourcesException) {
-                debugger.warning("Resource exhaustion detected, consider using 'reset' command");
-            }
-
             throw error;
         }
     }
@@ -160,7 +170,7 @@ public class Interpreter implements ASTVisitor<Void> {
         variables.put(varName, newValue);
         variableTypes.put(varName, targetType); // 更新为强类型
 
-        debugger.log("Inline type cast: " + varName + " -> " + targetType + " = " + newValue);
+        debugger.debug("Inline type cast: " + varName + " -> " + targetType + " = " + newValue);
 
         return null;
     }
@@ -191,7 +201,7 @@ public class Interpreter implements ASTVisitor<Void> {
         Object value = evaluate(expr.getValue());
         String varName = expr.getVariableName();
 
-        debugger.log("Assignment expression: " + varName + " = " + value);
+        debugger.debug("Assignment expression: " + varName + " = " + value);
 
         // 严格的类型检查
         if (variableTypes.containsKey(varName)) {
@@ -207,7 +217,7 @@ public class Interpreter implements ASTVisitor<Void> {
     @Override
     public Void visitBitwiseExpression(BitwiseExpression expr) {
         // 按位表达式应该在 ExpressionEvaluator 中处理
-        debugger.log("Bitwise expression: " + expr);
+        debugger.debug("Bitwise expression: " + expr);
         return null;
     }
 
@@ -216,7 +226,7 @@ public class Interpreter implements ASTVisitor<Void> {
         Object result = evaluate(expr);
         this.lastResult = result;
         if (result != null) {
-            debugger.log("Fraction expression result: " + result);
+            debugger.debug("Fraction expression result: " + result);
         }
         return null;
     }
@@ -236,7 +246,7 @@ public class Interpreter implements ASTVisitor<Void> {
         Object result = evaluate(expr);
         this.lastResult = result;
         if (result != null) {
-            debugger.log("Method call result: " + result);
+            debugger.debug("Method call result: " + result);
         }
         return null;
     }
@@ -281,7 +291,7 @@ public class Interpreter implements ASTVisitor<Void> {
         String varName = stmt.getVariableName();
         String typeHint = stmt.getTypeHint();
 
-        debugger.log("Assignment: " + varName + " = " + value +
+        debugger.debug("Assignment: " + varName + " = " + value +
                 (typeHint != null ? " (strong type: " + typeHint + ")" : " (free type)"));
 
         if (typeHint != null) {
@@ -289,20 +299,20 @@ public class Interpreter implements ASTVisitor<Void> {
             validateTypeCompatibility(typeHint, value, varName,
                     stmt.getLineNumber(), stmt.getColumnNumber());
             variableTypes.put(varName, typeHint);
-            debugger.log("Strong type assignment PASSED");
+            debugger.debug("Strong type assignment PASSED");
         } else {
             // 自由类型赋值 - 不进行类型检查
             if (variableTypes.containsKey(varName)) {
-                debugger.log("Warning: free type assignment to strongly typed variable " + varName);
+                debugger.warning("Warning: free type assignment to strongly typed variable " + varName);
                 // 自由类型赋值会覆盖原有的强类型，变为自由类型
                 variableTypes.remove(varName);
             }
-            debugger.log("Free type assignment - no type constraints");
+            debugger.debug("Free type assignment - no type constraints");
         }
 
         variables.put(varName, value);
         this.lastResult = value;
-        debugger.log("Var assigned: " + varName + " = " + value);
+        debugger.debug("Var assigned: " + varName + " = " + value);
         return null;
     }
 
@@ -312,12 +322,12 @@ public class Interpreter implements ASTVisitor<Void> {
      */
     private void validateTypeCompatibility(String expectedType, Object value, String varName, int lineNumber, int columnNumber) {
         if (value == null) {
-            debugger.log("Null value allowed for any type");
+            debugger.debug("Null value allowed for any type");
             return; // null 可以赋值给任何类型
         }
 
         String actualType = getValueType(value);
-        debugger.log("Validating: " + expectedType + " <- " + actualType);
+        debugger.debug("Validating: " + expectedType + " <- " + actualType);
 
         if (!isTypeCompatible(expectedType, value)) {
             String errorMsg = "Type mismatch: cannot assign " + actualType +
@@ -327,7 +337,7 @@ public class Interpreter implements ASTVisitor<Void> {
                     errorMsg, lineNumber, columnNumber
             );
         }
-        debugger.log("Type compatibility OK");
+        debugger.debug("Type compatibility OK");
     }
 
     @Override
@@ -335,7 +345,7 @@ public class Interpreter implements ASTVisitor<Void> {
         Object result = evaluate(stmt.getExpression());
         this.lastResult = result;
         if (result != null) {
-            debugger.log("Expression result: " + result);
+            debugger.debug("Expression result: " + result);
         }
         return null;
     }
@@ -343,7 +353,7 @@ public class Interpreter implements ASTVisitor<Void> {
     @Override
     public Void visitImportStatement(ImportStatement stmt) {
         String importPath = stmt.getClassName();
-        debugger.log("Import: " + importPath);
+        debugger.debug("Import: " + importPath);
 
         try {
             // 首先尝试作为外置库导入
@@ -351,7 +361,7 @@ public class Interpreter implements ASTVisitor<Void> {
             boolean libraryLoaded = loader.loadLibraryFromImport(importPath, this.vm);
 
             if (libraryLoaded) {
-                debugger.log("External library loaded: " + importPath);
+                debugger.debug("External library loaded: " + importPath);
                 return null;
             }
 
@@ -364,14 +374,14 @@ public class Interpreter implements ASTVisitor<Void> {
                 vm.getImportedClasses().put(importPath, clazz);
             }
 
-            debugger.log("Class imported: " + importPath);
+            debugger.debug("Class imported: " + importPath);
 
         } catch (ClassNotFoundException e) {
             // 静默处理类未找到异常，不抛出错误
-            debugger.log("Class not found: " + importPath);
+            debugger.debug("Class not found: " + importPath);
         } catch (Exception e) {
             // 静默处理其他异常
-            debugger.log("Import failed: " + importPath);
+            debugger.debug("Import failed: " + importPath);
         }
         return null;
     }
@@ -380,17 +390,17 @@ public class Interpreter implements ASTVisitor<Void> {
     public Void visitLoopStatement(LoopStatement stmt) {
         Object condition = evaluate(stmt.getCondition());
 
-        debugger.log("Loop condition: " + condition + " (type: " +
+        debugger.debug("Loop condition: " + condition + " (type: " +
                 (condition != null ? condition.getClass().getSimpleName() : "null") + ")");
 
         // 处理数字类型的循环条件（如 loop(10):）
         if (condition instanceof Number) {
             int count = ((Number) condition).intValue();
 
-            debugger.log("Loop count: " + count);
+            debugger.debug("Loop count: " + count);
 
             for (int i = 0; i < count; i++) {
-                debugger.log("Loop iteration: " + (i + 1) + "/" + count);
+                debugger.debug("Loop iteration: " + (i + 1) + "/" + count);
 
                 // 执行循环体中的所有语句
                 for (Statement bodyStmt : stmt.getBody()) {
@@ -401,23 +411,23 @@ public class Interpreter implements ASTVisitor<Void> {
         // 处理布尔类型的循环条件（如 loop(true): 或 loop(a > b):）
         else if (condition instanceof Boolean) {
             if ((Boolean) condition) {
-                debugger.log("Boolean condition is true, executing loop body");
+                debugger.debug("Boolean condition is true, executing loop body");
                 for (Statement bodyStmt : stmt.getBody()) {
                     bodyStmt.accept(this);
                 }
             } else {
-                debugger.log("Boolean condition is false, skipping loop");
+                debugger.debug("Boolean condition is false, skipping loop");
             }
         }
         else {
             // 默认情况下，如果条件不是数字或布尔值，当作真值处理并执行一次
             if (condition != null) {
-                debugger.log("Non-boolean condition, executing loop body once");
+                debugger.debug("Non-boolean condition, executing loop body once");
                 for (Statement bodyStmt : stmt.getBody()) {
                     bodyStmt.accept(this);
                 }
             } else {
-                debugger.log("Null condition, skipping loop");
+                debugger.debug("Null condition, skipping loop");
             }
         }
         return null;
@@ -427,14 +437,14 @@ public class Interpreter implements ASTVisitor<Void> {
     public Void visitUseStatement(UseStatement stmt) {
         Expression methodCall = stmt.getMethodCall();
 
-        debugger.log("Use statement executing method call");
+        debugger.debug("Use statement executing method call");
 
         // 直接执行方法调用表达式
         Object result = evaluate(methodCall);
         this.lastResult = result;
 
         if (result != null) {
-            debugger.log("Use statement result: " + result);
+            debugger.debug("Use statement result: " + result);
         }
 
         return null;
@@ -445,7 +455,7 @@ public class Interpreter implements ASTVisitor<Void> {
         String varA = stmt.getVarA().getName();
         String varB = stmt.getVarB().getName();
 
-        debugger.log("Swap: " + varA + ", " + varB);
+        debugger.debug("Swap: " + varA + ", " + varB);
 
         if (!variables.containsKey(varA)) {
             throw VastExceptions.NonExistentObject.variableNotFound(varA);
@@ -460,7 +470,7 @@ public class Interpreter implements ASTVisitor<Void> {
         variables.put(varA, valueB);
         variables.put(varB, valueA);
 
-        debugger.log("Swapped: " + varA + " = " + variables.get(varA) + ", " + varB + " = " + variables.get(varB));
+        debugger.debug("Swapped: " + varA + " = " + variables.get(varA) + ", " + varB + " = " + variables.get(varB));
         return null;
     }
 
@@ -479,26 +489,8 @@ public class Interpreter implements ASTVisitor<Void> {
 
             Method method = findBestMethod(clazz, methodName, args);
             if (method == null) {
-                // 提供更详细的错误信息
-                debugger.error("Method not found: " + className + "." + methodName +
-                        " with " + args.length + " arguments");
-                debugger.error("Argument types: " + Arrays.toString(
-                        Arrays.stream(args).map(arg -> arg != null ? arg.getClass().getSimpleName() : "null").toArray()
-                ));
-
-                // 列出所有可用的方法
-                Method[] allMethods = clazz.getMethods();
-                List<String> availableMethods = new ArrayList<>();
-                for (Method m : allMethods) {
-                    if (m.getName().equals(methodName)) {
-                        availableMethods.add(methodName + Arrays.toString(m.getParameterTypes()));
-                    }
-                }
-                if (!availableMethods.isEmpty()) {
-                    debugger.error("Available overloads: " + availableMethods);
-                }
-
-                throw VastExceptions.NonExistentObject.methodNotFound(className, methodName);
+                String suggestion = errorSuggestor.suggestForUnknownMethod(methodName, className);
+                throw new VastExceptions.NonExistentObject(suggestion);
             }
 
             // 处理可变参数
@@ -617,7 +609,8 @@ public class Interpreter implements ASTVisitor<Void> {
         try {
             return Class.forName(className);
         } catch (ClassNotFoundException e) {
-            return null;
+            String suggestion = errorSuggestor.suggestForUnknownClass(className);
+            throw new VastExceptions.NonExistentObject(suggestion);// 类不存在则优雅地抛出异常
         }
     }
 
@@ -816,7 +809,7 @@ public class Interpreter implements ASTVisitor<Void> {
         Object result = evaluate(expr);
         this.lastResult = result;
         if (result != null) {
-            debugger.log("Type cast expression result: " + result);
+            debugger.debug("Type cast expression result: " + result);
         }
         return null;
     }
@@ -835,14 +828,14 @@ public class Interpreter implements ASTVisitor<Void> {
             Object value = evaluate(expr.getExpression());
             String targetType = expr.getTargetType();
 
-            debugger.log("Casting " + value + " (" + getValueType(value) +
+            debugger.debug("Casting " + value + " (" + getValueType(value) +
                     ") to " + targetType);
 
             Object result = Interpreter.this.performTypeCast(value, targetType,
                     expr.getLineNumber(), expr.getColumnNumber(),
                     expr.isExplicit());
 
-            debugger.log("Result: " + result + " (" + getValueType(result) + ")");
+            debugger.debug("Result: " + result + " (" + getValueType(result) + ")");
 
             return result;
         }
@@ -881,7 +874,8 @@ public class Interpreter implements ASTVisitor<Void> {
 
             // 最后检查变量
             if (!variables.containsKey(name)) {
-                throw VastExceptions.NonExistentObject.variableNotFound(name);
+                String suggestion = errorSuggestor.suggestForUnknownVariable(name);
+                throw new VastExceptions.NonExistentObject(suggestion);
             }
             return variables.get(name);
         }
@@ -908,7 +902,7 @@ public class Interpreter implements ASTVisitor<Void> {
             Object value = evaluate(expr.getExpression());
             boolean isPermanent = expr.isPermanent();
 
-            debugger.log("Fraction expression: " + expr + ", value: " + value +
+            debugger.debug("Fraction expression: " + expr + ", value: " + value +
                     ", permanent: " + isPermanent);
 
             // 创建分数对象
@@ -1086,19 +1080,19 @@ public class Interpreter implements ASTVisitor<Void> {
             Object value = evaluate(expr.getValue());
             String varName = expr.getVariableName();
 
-            debugger.log("Assignment expression: " + varName + " = " + value +
+            debugger.debug("Assignment expression: " + varName + " = " + value +
                     " (value type: " + getValueType(value) + ")");
 
             // 严格的类型检查
             if (Interpreter.this.variableTypes.containsKey(varName)) {
                 String expectedType = Interpreter.this.variableTypes.get(varName);
-                debugger.log("Variable '" + varName + "' has type constraint: " + expectedType);
+                debugger.debug("Variable '" + varName + "' has type constraint: " + expectedType);
 
                 Interpreter.this.validateTypeCompatibility(expectedType, value, varName,
                         expr.getLineNumber(), expr.getColumnNumber());
-                debugger.log("Type check PASSED for " + varName);
+                debugger.debug("Type check PASSED for " + varName);
             } else {
-                debugger.log("No type constraint for " + varName + ", allowing assignment");
+                debugger.debug("No type constraint for " + varName + ", allowing assignment");
             }
 
             variables.put(varName, value);
