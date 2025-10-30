@@ -451,6 +451,31 @@ public class Parser {
     private Expression parseAssignment() {
         Expression expr = parseLogicalOr();
 
+        // 处理复合赋值运算符
+        if (match("PLUS_EQUAL", "MINUS_EQUAL", "STAR_EQUAL", "SLASH_EQUAL",
+                "SLASH_SLASH_EQUAL", "PERCENT_EQUAL")) {
+            Token operator = previous();
+            Expression value = parseAssignment();
+
+            if (expr instanceof VariableExpression) {
+                String name = ((VariableExpression) expr).getName();
+
+                // 将 a //= b 转换为 a = a // b
+                Expression leftOperand = new VariableExpression(name,
+                        expr.getLineNumber(), expr.getColumnNumber());
+
+                String binaryOperator = getBinaryOperatorFromCompound(operator.getType());
+                Expression binaryExpr = new BinaryExpression(leftOperand, binaryOperator, value,
+                        operator.getLine(), operator.getColumn());
+
+                return new AssignmentExpression(name, binaryExpr,
+                        expr.getLineNumber(), expr.getColumnNumber());
+            }
+
+            throw error(operator, "Invalid assignment target");
+        }
+
+        // 处理普通赋值
         if (match("EQUAL")) {
             Token equals = previous();
             Expression value = parseAssignment();
@@ -465,6 +490,22 @@ public class Parser {
         }
 
         return expr;
+    }
+
+    /**
+     * 将复合赋值运算符转换为对应的二元运算符
+     */
+    private String getBinaryOperatorFromCompound(String compoundOperator) {
+        switch (compoundOperator) {
+            case "PLUS_EQUAL": return "+";
+            case "MINUS_EQUAL": return "-";
+            case "STAR_EQUAL": return "*";
+            case "SLASH_EQUAL": return "/";
+            case "SLASH_SLASH_EQUAL": return "//";  // 新增
+            case "PERCENT_EQUAL": return "%";
+            default:
+                throw new IllegalArgumentException("Unknown compound operator: " + compoundOperator);
+        }
     }
 
     //按位或运算
@@ -637,6 +678,20 @@ public class Parser {
                     operator.getLine(), operator.getColumn());
         }
 
+        // 自增自减操作
+        if (match("PLUS_PLUS", "MINUS_MINUS")) {
+            Token operator = previous();
+            Expression right = parseUnary();
+
+            // 检查右操作数是否是变量
+            if (!(right instanceof VariableExpression)) {
+                throw error(operator, "Increment/decrement operand must be a variable");
+            }
+
+            return new UnaryExpression(operator.getLexeme(), right,
+                    operator.getLine(), operator.getColumn());
+        }
+
         // 然后处理根式修饰符
         if (match("BACKQUOTE")) {
             Token operator = previous();
@@ -653,12 +708,27 @@ public class Parser {
         }
 
         // 最后处理其他一元运算符
-        if (match("BANG", "MINUS", "PLUS_PLUS", "BITWISE_NOT")) {
+        if (match("BANG", "MINUS", "BITWISE_NOT")) {
             Token operator = previous();
             Expression right = parseUnary();
             return new UnaryExpression(operator.getLexeme(), right,
                     operator.getLine(), operator.getColumn());
         }
+
+        Expression expr = parsePrimary();//处理后缀自增自减
+        while (match("PLUS_PLUS", "MINUS_MINUS")) {
+            Token operator = previous();
+
+            // 检查左操作数是否是变量
+            if (!(expr instanceof VariableExpression)) {
+                throw error(operator, "Increment/decrement operand must be a variable");
+            }
+
+            // 创建后缀一元表达式
+            expr = new UnaryExpression(operator.getLexeme() + "_POSTFIX", expr,
+                    operator.getLine(), operator.getColumn());
+        }
+
 
         return parsePrimary();
     }

@@ -8,7 +8,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 //词法分析器
-public class    Lexer {
+public class Lexer {
     private final String source;
     private final List<Token> tokens = new ArrayList<>();
     private int start = 0;
@@ -64,29 +64,53 @@ public class    Lexer {
             case ',': addToken("COMMA"); break;
             case '.': addToken("DOT"); break;
             case ':': addToken("COLON");break;
-            case '-': addToken("MINUS"); break;
+            case '-':
+                if (match('=')) {
+                    addToken("MINUS_EQUAL"); // -=
+                } else if (match('-')) {
+                    addToken("MINUS_MINUS"); // --
+                } else {
+                    addToken("MINUS");
+                }
+                break;
             case '+':
-                if (match('+')) {
-                    addToken("PLUS_PLUS");
+                if (match('=')) {
+                    addToken("PLUS_EQUAL");  // +=
+                } else if (match('+')) {
+                    addToken("PLUS_PLUS");   // ++
                 } else {
                     addToken("PLUS");
                 }
                 break;
             case '*':
-                if (match('*')) {
-                    addToken("STAR_STAR");
+                if (match('=')) {
+                    addToken("STAR_EQUAL");  // *=
+                } else if (match('*')) {
+                    addToken("STAR_STAR");   // **
                 } else {
                     addToken("STAR");
                 }
                 break;
             case '/':
-                if (match('/')) {
-                    addToken("SLASH_SLASH");
+                if (match('=')) {
+                    addToken("SLASH_EQUAL"); // /=
+                } else if (match('/')) {
+                    if (match('=')) {
+                        addToken("SLASH_SLASH_EQUAL"); // //=
+                    } else {
+                        addToken("SLASH_SLASH"); // //
+                    }
                 } else {
                     addToken("SLASH");
                 }
                 break;
-            case '%': addToken("PERCENT"); break;
+            case '%':
+                if (match('=')) {
+                    addToken("PERCENT_EQUAL"); // %=
+                } else {
+                    addToken("PERCENT");
+                }
+                break;
             case '=':
                 if (match('=')) {
                     addToken("EQUAL_EQUAL");

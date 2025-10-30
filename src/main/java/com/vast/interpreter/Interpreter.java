@@ -1049,7 +1049,7 @@ public class Interpreter implements ASTVisitor<Void> {
                 case "**":
                     return performPower(left, right);
                 case "//":
-                    return performIntegerDivision(left, right);
+                    return performIntegerDivision(left, right);  // 地板除
                 case "%":
                     return performModulo(left, right);
                 case "++":
@@ -1084,6 +1084,14 @@ public class Interpreter implements ASTVisitor<Void> {
             Object right = evaluate(expr.getRight());
 
             switch (expr.getOperator()) {
+                case "++":  // 前缀自增
+                    return handlePrefixIncrement(expr.getRight(), 1);
+                case "--":  // 前缀自减
+                    return handlePrefixIncrement(expr.getRight(), -1);
+                case "++_POSTFIX":  // 后缀自增
+                    return handlePostfixIncrement(expr.getRight(), 1);
+                case "--_POSTFIX":  // 后缀自减
+                    return handlePostfixIncrement(expr.getRight(), -1);
                 case "-":
                     if (right instanceof Integer) return -(Integer) right;
                     if (right instanceof Double) return -(Double) right;
@@ -1098,13 +1106,6 @@ public class Interpreter implements ASTVisitor<Void> {
                             "Operand type: " + (right != null ? right.getClass().getSimpleName() : "null"),
                             expr.getLineNumber(),
                             expr.getColumnNumber()
-                    );
-                case "++":
-                    if (right instanceof Integer) return (Integer) right + 1;
-                    if (right instanceof Double) return (Double) right + 1.0;
-                    throw new VastExceptions.MathError(
-                            "Unary ++ requires numeric operand",
-                            "Operand type: " + (right != null ? right.getClass().getSimpleName() : "null")
                     );
                 case "~":  // 按位取反
                     if (right instanceof Integer) {
@@ -1121,6 +1122,77 @@ public class Interpreter implements ASTVisitor<Void> {
                             expr.getColumnNumber()
                     );
             }
+        }
+
+        /**
+         * 处理前缀自增/自减
+         */
+        private Object handlePrefixIncrement(Expression expr, int increment) {
+            if (!(expr instanceof VariableExpression)) {
+                throw new VastExceptions.NotGrammarException(
+                        "Increment/decrement operand must be a variable",
+                        expr.getLineNumber(), expr.getColumnNumber()
+                );
+            }
+
+            String varName = ((VariableExpression) expr).getName();
+            Object currentValue = variables.get(varName);
+
+            if (currentValue == null) {
+                throw VastExceptions.NonExistentObject.variableNotFound(varName);
+            }
+
+            Object newValue = performIncrement(currentValue, increment);
+            variables.put(varName, newValue);
+
+            return newValue;
+        }
+
+        /**
+         * 处理后缀自增/自减
+         */
+        private Object handlePostfixIncrement(Expression expr, int increment) {
+            if (!(expr instanceof VariableExpression)) {
+                throw new VastExceptions.NotGrammarException(
+                        "Increment/decrement operand must be a variable",
+                        expr.getLineNumber(), expr.getColumnNumber()
+                );
+            }
+
+            String varName = ((VariableExpression) expr).getName();
+            Object currentValue = variables.get(varName);
+
+            if (currentValue == null) {
+                throw VastExceptions.NonExistentObject.variableNotFound(varName);
+            }
+
+            Object newValue = performIncrement(currentValue, increment);
+            variables.put(varName, newValue);
+
+            // 后缀运算符返回原始值
+            return currentValue;
+        }
+
+        /**
+         * 执行实际的增量操作
+         */
+        private Object performIncrement(Object value, int increment) {
+            if (value instanceof Integer) {
+                return (Integer) value + increment;
+            }
+            if (value instanceof Double) {
+                return (Double) value + increment;
+            }
+            if (value instanceof Fraction) {
+                Fraction fraction = (Fraction) value;
+                return new Fraction(fraction.getNumerator() + increment * fraction.getDenominator(),
+                        fraction.getDenominator());
+            }
+
+            throw new VastExceptions.MathError(
+                    "Cannot increment/decrement non-numeric value: " + value,
+                    "Increment operation"
+            );
         }
 
         @Override
@@ -1300,10 +1372,28 @@ public class Interpreter implements ASTVisitor<Void> {
 
         private Object performIntegerDivision(Object left, Object right) {
             checkNumberOperands(left, right);
+
+            // 处理分数的情况
+            if (left instanceof Fraction || right instanceof Fraction) {
+                Fraction leftFraction = toFraction(left);
+                Fraction rightFraction = toFraction(right);
+
+                if (rightFraction.getNumerator() == 0) {
+                    throw VastExceptions.MathError.divisionByZero();
+                }
+
+                // 分数地板除：转换为浮点数除法后取整
+                double result = leftFraction.toDouble() / rightFraction.toDouble();
+                return (int) Math.floor(result);
+            }
+
+            // 常规地板除
             if (toDouble(right) == 0) {
                 throw VastExceptions.MathError.divisionByZero();
             }
-            return toInt(left) / toInt(right);
+
+            double result = toDouble(left) / toDouble(right);
+            return (int) Math.floor(result);
         }
 
         private Object performNumberConcatenation(Object left, Object right) {
