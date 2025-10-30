@@ -599,22 +599,7 @@ public class Parser {
     }
 
     private Expression parseUnary() {
-        // 处理分数修饰符
-        if (match("BACKQUOTE")) {
-            Token operator = previous();
-
-            // 必须紧跟左括号
-            if (!match("LEFT_PAREN")) {
-                throw error(peek(), "Root modifier must be followed by parenthesized expression");
-            }
-
-            Expression expr = parseExpression();
-            consume("RIGHT_PAREN", "Expect ')' after root expression");
-
-            return new RootExpression(expr, operator.getLine(), operator.getColumn());
-        }
-
-        // 处理类型转换表达式：(type) expression
+        // 首先处理括号相关的表达式（类型转换和普通括号）
         if (match("LEFT_PAREN")) {
             // 检查是否是类型转换
             if (check("IDENTIFIER") && isTypeName(peek().getLexeme())) {
@@ -635,7 +620,39 @@ public class Parser {
             }
         }
 
-        // 处理按位取反和其他一元运算符
+        // 然后处理分数修饰符
+        if (match("DOLLAR", "DOUBLE_DOLLAR")) {
+            Token operator = previous();
+            boolean isPermanent = operator.getType().equals("DOUBLE_DOLLAR");
+
+            // 必须紧跟左括号
+            if (!match("LEFT_PAREN")) {
+                throw error(peek(), "Fraction modifier must be followed by parenthesized expression");
+            }
+
+            Expression expr = parseExpression();
+            consume("RIGHT_PAREN", "Expect ')' after fraction expression");
+
+            return new FractionExpression(expr, isPermanent,
+                    operator.getLine(), operator.getColumn());
+        }
+
+        // 然后处理根式修饰符
+        if (match("BACKQUOTE")) {
+            Token operator = previous();
+
+            // 必须紧跟左括号
+            if (!match("LEFT_PAREN")) {
+                throw error(peek(), "Root modifier must be followed by parenthesized expression");
+            }
+
+            Expression expr = parseExpression();
+            consume("RIGHT_PAREN", "Expect ')' after root expression");
+
+            return new RootExpression(expr, operator.getLine(), operator.getColumn());
+        }
+
+        // 最后处理其他一元运算符
         if (match("BANG", "MINUS", "PLUS_PLUS", "BITWISE_NOT")) {
             Token operator = previous();
             Expression right = parseUnary();
