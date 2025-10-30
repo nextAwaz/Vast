@@ -19,6 +19,7 @@ public interface ASTVisitor<T> {
     T visitTypeCastExpression(TypeCastExpression expr);
     T visitFractionExpression(FractionExpression expr);
     T visitBitwiseExpression(BitwiseExpression expr);
+    T visitRootExpression(RootExpression expr);
 
     // 语句访问方法
     T visitVariableDeclaration(VariableDeclaration stmt);
@@ -28,7 +29,7 @@ public interface ASTVisitor<T> {
     T visitLoopStatement(LoopStatement stmt);
     T visitUseStatement(UseStatement stmt);
     T visitSwapStatement(SwapStatement stmt);
-    T visitInlineTypeCastStatement(InlineTypeCastStatement stmt); // 新增
+    T visitInlineTypeCastStatement(InlineTypeCastStatement stmt);
 
     // 处理未知节点类型
     default T visit(ASTNode node) {

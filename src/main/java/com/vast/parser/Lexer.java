@@ -141,6 +141,9 @@ public class    Lexer {
                     addToken("DOLLAR");  // 单步分数修饰符
                 }
                 break;
+            case '`':
+                addToken("BACKQUOTE");//开方运算（由于键盘上面没有开方符号，所以使用反引号代替）
+                break;
 
             case ' ':
             case '\r':

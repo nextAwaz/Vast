@@ -600,20 +600,18 @@ public class Parser {
 
     private Expression parseUnary() {
         // 处理分数修饰符
-        if (match("DOLLAR", "DOUBLE_DOLLAR")) {
+        if (match("BACKQUOTE")) {
             Token operator = previous();
-            boolean isPermanent = operator.getType().equals("DOUBLE_DOLLAR");
 
             // 必须紧跟左括号
             if (!match("LEFT_PAREN")) {
-                throw error(peek(), "Fraction modifier must be followed by parenthesized expression");
+                throw error(peek(), "Root modifier must be followed by parenthesized expression");
             }
 
             Expression expr = parseExpression();
-            consume("RIGHT_PAREN", "Expect ')' after fraction expression");
+            consume("RIGHT_PAREN", "Expect ')' after root expression");
 
-            return new FractionExpression(expr, isPermanent,
-                    operator.getLine(), operator.getColumn());
+            return new RootExpression(expr, operator.getLine(), operator.getColumn());
         }
 
         // 处理类型转换表达式：(type) expression

@@ -6,6 +6,7 @@ import com.vast.ast.statements.*;
 import com.vast.internal.Debugger;
 import com.vast.internal.Fraction;
 import com.vast.internal.SmartErrorSuggestor;
+import com.vast.internal.Sys;
 import com.vast.registry.VastLibraryLoader;
 import com.vast.vm.VastVM;
 import com.vast.internal.exception.VastExceptions;
@@ -137,6 +138,16 @@ public class Interpreter implements ASTVisitor<Void> {
             debugger.error("Runtime error: " + error.getUserFriendlyMessage());
             throw error;
         }
+    }
+
+    @Override
+    public Void visitRootExpression(RootExpression expr) {
+        Object result = evaluate(expr);
+        this.lastResult = result;
+        if (result != null) {
+            debugger.debug("Root expression result: " + result);
+        }
+        return null;
     }
 
     @Override
@@ -841,6 +852,43 @@ public class Interpreter implements ASTVisitor<Void> {
         }
 
         @Override
+        public Object visitRootExpression(RootExpression expr) {
+            Object value = evaluate(expr.getExpression());
+
+            debugger.debug("Root expression: " + expr + ", value: " + value);
+
+            // 创建平方根表达式
+            return performRootOperation(value,
+                    expr.getLineNumber(), expr.getColumnNumber());
+        }
+
+        /**
+         * 执行开方运算
+         */
+        private Object performRootOperation(Object value, int lineNumber, int columnNumber) {
+            double numericValue = toDouble(value);
+
+            if (numericValue < 0) {
+                throw VastExceptions.MathError.invalidSquareRoot(numericValue, lineNumber, columnNumber);
+            }
+
+            double result = Math.sqrt(numericValue);
+
+            // 尝试简化结果
+            if (result == Math.floor(result) && !Double.isInfinite(result)) {
+                return (int) result;  // 整数结果
+            }
+
+            // 尝试表示为分数
+            Fraction fraction = Fraction.fromNumber(result);
+            if (isExactFraction(fraction, result)) {
+                return fraction;  // 精确的分数表示
+            }
+
+            return result;  // 浮点数结果
+        }
+
+        @Override
         public Object visitInlineTypeCastStatement(InlineTypeCastStatement stmt) {
             // 表达式求值器不应该处理语句，这里应该不会被执行到
             throw new VastExceptions.NotGrammarException(
@@ -1171,6 +1219,11 @@ public class Interpreter implements ASTVisitor<Void> {
         }
 
         private Object performPower(Object left, Object right) {
+            // 处理分数指数（开方运算）
+            if (right instanceof Fraction) {
+                return performFractionPower(left, (Fraction) right);
+            }
+
             checkNumberOperands(left, right);
             double base = toDouble(left);
             double exponent = toDouble(right);
@@ -1180,6 +1233,69 @@ public class Interpreter implements ASTVisitor<Void> {
                 return (int) result;
             }
             return result;
+        }
+
+        /**
+         * 处理分数指数的幂运算（开方运算）
+         */
+        private Object performFractionPower(Object base, Fraction exponent) {
+            double baseValue = toDouble(base);
+
+            // 检查指数是否为 1/n 形式（开n次方）
+            if (exponent.getNumerator() == 1) {
+                int root = exponent.getDenominator();
+
+                if (root == 2) {
+                    // 平方根
+                    if (baseValue < 0) {
+                        throw VastExceptions.MathError.invalidSquareRoot(baseValue);
+                    }
+                    double result = Math.sqrt(baseValue);
+                    return simplifyRootResult(result);
+                } else if (root == 3) {
+                    // 立方根
+                    double result = Math.cbrt(baseValue);
+                    return simplifyRootResult(result);
+                } else {
+                    // n次方根
+                    if (baseValue < 0 && root % 2 == 0) {
+                        throw VastExceptions.MathError.invalidSquareRoot(baseValue);
+                    }
+                    double result = Math.pow(baseValue, 1.0 / root);
+                    return simplifyRootResult(result);
+                }
+            } else {
+                // 一般的分数指数：a^(m/n) = (a^m)的n次方根
+                double numeratorPower = Math.pow(baseValue, exponent.getNumerator());
+                return performFractionPower(numeratorPower,
+                        new Fraction(1, exponent.getDenominator()));
+            }
+        }
+
+        /**
+         * 简化根式结果：如果结果是整数则返回整数，否则返回分数或浮点数
+         */
+        private Object simplifyRootResult(double result) {
+            // 检查是否为整数
+            if (result == Math.floor(result) && !Double.isInfinite(result)) {
+                return (int) result;
+            }
+
+            // 尝试表示为分数
+            Fraction fraction = Fraction.fromNumber(result);
+            if (isExactFraction(fraction, result)) {
+                return fraction;
+            }
+
+            return result;
+        }
+
+        /**
+         * 检查分数是否精确表示原值
+         */
+        private boolean isExactFraction(Fraction fraction, double original) {
+            double fractionValue = fraction.toDouble();
+            return Math.abs(fractionValue - original) < 1e-10;
         }
 
         private Object performIntegerDivision(Object left, Object right) {
@@ -1267,6 +1383,11 @@ public class Interpreter implements ASTVisitor<Void> {
         }
 
         private Object performAddition(Object left, Object right) {
+            // 处理 Fraction 对象的加法
+            if (left instanceof Fraction || right instanceof Fraction) {
+                return performFractionAddition(left, right);
+            }
+
             if (left instanceof Double && right instanceof Double) {
                 return (Double) left + (Double) right;
             }
@@ -1282,7 +1403,47 @@ public class Interpreter implements ASTVisitor<Void> {
             );
         }
 
+        /**
+         * 处理 Fraction 对象的加法运算
+         */
+        private Object performFractionAddition(Object left, Object right) {
+            Fraction leftFraction = toFraction(left);
+            Fraction rightFraction = toFraction(right);
+
+            // 使用 Sys 类中的分数加法方法
+            return Sys.fractionAdd(leftFraction, rightFraction);
+        }
+
+        /**
+         * 将对象转换为 Fraction
+         */
+        private Fraction toFraction(Object obj) {
+            if (obj instanceof Fraction) {
+                return (Fraction) obj;
+            }
+            if (obj instanceof Integer) {
+                return new Fraction((Integer) obj, 1);
+            }
+            if (obj instanceof Double) {
+                return Fraction.fromNumber(obj);
+            }
+            if (obj instanceof String) {
+                return Sys.parseFraction((String) obj);
+            }
+            throw new VastExceptions.MathError(
+                    "Cannot convert to fraction: " + obj,
+                    "Type conversion"
+            );
+        }
+
         private Object performSubtraction(Object left, Object right) {
+            // 处理 Fraction 对象的减法
+            if (left instanceof Fraction || right instanceof Fraction) {
+                Fraction leftFraction = toFraction(left);
+                Fraction rightFraction = toFraction(right);
+                return Sys.fractionSubtract(leftFraction, rightFraction);
+            }
+
             checkNumberOperands(left, right);
             if (left instanceof Double || right instanceof Double) {
                 return toDouble(left) - toDouble(right);
@@ -1291,9 +1452,17 @@ public class Interpreter implements ASTVisitor<Void> {
         }
 
         private Object performMultiplication(Object left, Object right) {
+            // 处理字符串重复运算
             if ((left instanceof String && right instanceof Number) ||
                     (left instanceof Number && right instanceof String)) {
                 return performStringMultiplication(left, right);
+            }
+
+            // 处理 Fraction 对象的乘法
+            if (left instanceof Fraction || right instanceof Fraction) {
+                Fraction leftFraction = toFraction(left);
+                Fraction rightFraction = toFraction(right);
+                return Sys.fractionMultiply(leftFraction, rightFraction);
             }
 
             checkNumberOperands(left, right);
@@ -1304,6 +1473,16 @@ public class Interpreter implements ASTVisitor<Void> {
         }
 
         private Object performDivision(Object left, Object right) {
+            // 处理 Fraction 对象的除法
+            if (left instanceof Fraction || right instanceof Fraction) {
+                Fraction leftFraction = toFraction(left);
+                Fraction rightFraction = toFraction(right);
+                if (rightFraction.getNumerator() == 0) {
+                    throw VastExceptions.MathError.divisionByZero();
+                }
+                return Sys.fractionDivide(leftFraction, rightFraction);
+            }
+
             checkNumberOperands(left, right);
             if (toDouble(right) == 0) {
                 throw VastExceptions.MathError.divisionByZero();
@@ -1311,9 +1490,14 @@ public class Interpreter implements ASTVisitor<Void> {
             return toDouble(left) / toDouble(right);
         }
 
-
-
         private int compareValues(Object left, Object right) {
+            // 处理 Fraction 对象的比较
+            if (left instanceof Fraction || right instanceof Fraction) {
+                Fraction leftFraction = toFraction(left);
+                Fraction rightFraction = toFraction(right);
+                return Sys.fractionCompare(leftFraction, rightFraction);
+            }
+
             if (left instanceof Double && right instanceof Double) {
                 return Double.compare((Double) left, (Double) right);
             }
