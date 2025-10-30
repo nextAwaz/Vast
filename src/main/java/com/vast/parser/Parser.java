@@ -52,9 +52,7 @@ public class Parser {
 
     private Statement parseStatement() {
         // 跳过语句前的换行符
-        while (match("NEWLINE")) {
-            // 继续跳过
-        }
+        while (match("NEWLINE")) {}// 继续跳过
 
         if (isAtEnd()) return null;
 
@@ -210,54 +208,48 @@ public class Parser {
     }
 
     private Statement parseExpressionOrAssignment() {
+        // 先尝试解析表达式
         Expression expr = parseExpression();
 
-        // 检查是否是内联类型转换：type(expression)
-        if (expr instanceof TypeCastExpression) {
-            TypeCastExpression castExpr = (TypeCastExpression) expr;
-            // 如果类型转换表达式后面没有赋值，就是内联类型转换
-            if (!check("EQUAL")) {
-                return new InlineTypeCastStatement(castExpr,
-                        castExpr.getLineNumber(), castExpr.getColumnNumber());
-            }
-        }
+        // 检查是否是赋值语句
+        if (check("EQUAL") ||
+                check("PLUS_EQUAL") || check("MINUS_EQUAL") ||
+                check("STAR_EQUAL") || check("SLASH_EQUAL") ||
+                check("SLASH_SLASH_EQUAL") || check("PERCENT_EQUAL")) {
 
-        // 检查是否是方法调用
-        if (expr instanceof VariableExpression && match("DOT")) {
-            if (match("IDENTIFIER")) {
-                String methodName = previous().getLexeme();
+            // 确保左边是有效的赋值目标
+            if (expr instanceof VariableExpression) {
+                String varName = ((VariableExpression) expr).getName();
 
-                if (match("LEFT_PAREN")) {
-                    List<Expression> arguments = parseExpressionList();
-                    consume("RIGHT_PAREN", "Expect ')' after arguments");
+                // 处理复合赋值
+                if (match("PLUS_EQUAL", "MINUS_EQUAL", "STAR_EQUAL", "SLASH_EQUAL",
+                        "SLASH_SLASH_EQUAL", "PERCENT_EQUAL")) {
+                    Token operator = previous();
+                    Expression value = parseExpression();
 
-                    return new ExpressionStatement(
-                            new MethodCallExpression(
-                                    (VariableExpression) expr,
-                                    methodName,
-                                    arguments,
-                                    expr.getLineNumber(),
-                                    expr.getColumnNumber()
-                            ),
-                            expr.getLineNumber(),
-                            expr.getColumnNumber()
-                    );
-                } else {
-                    throw error(peek(), "Expect '(' after method name");
+                    // 转换为二元运算形式：a = a + b
+                    Expression leftOperand = new VariableExpression(varName,
+                            expr.getLineNumber(), expr.getColumnNumber());
+                    String binaryOperator = getBinaryOperatorFromCompound(operator.getType());
+                    Expression binaryExpr = new BinaryExpression(leftOperand, binaryOperator, value,
+                            operator.getLine(), operator.getColumn());
+
+                    return new AssignmentStatement(varName, binaryExpr, null,
+                            expr.getLineNumber(), expr.getColumnNumber());
                 }
+
+                // 处理普通赋值
+                if (match("EQUAL")) {
+                    Expression value = parseExpression();
+                    return new AssignmentStatement(varName, value, null,
+                            expr.getLineNumber(), expr.getColumnNumber());
+                }
+            } else {
+                throw error(peek(), "Invalid assignment target");
             }
         }
 
-        // 检查是否是自由类型赋值
-        if (expr instanceof VariableExpression && match("EQUAL")) {
-            Expression value = parseExpression();
-
-            // 自由类型赋值
-            String varName = ((VariableExpression) expr).getName();
-            return new AssignmentStatement(varName, value, null,
-                    expr.getLineNumber(), expr.getColumnNumber());
-        }
-
+        // 如果不是赋值，返回表达式语句
         return new ExpressionStatement(expr,
                 expr.getLineNumber(), expr.getColumnNumber());
     }
@@ -445,10 +437,12 @@ public class Parser {
 
     // 表达式解析（运算符优先级处理）
     private Expression parseExpression() {
+        debugger.debug("parseExpression: current token = " + peek());
         return parseAssignment();
     }
 
     private Expression parseAssignment() {
+        debugger.debug("parseAssignment: current token = " + peek());
         Expression expr = parseLogicalOr();
 
         // 处理复合赋值运算符
@@ -460,7 +454,7 @@ public class Parser {
             if (expr instanceof VariableExpression) {
                 String name = ((VariableExpression) expr).getName();
 
-                // 将 a //= b 转换为 a = a // b
+                // 将 a += b 转换为 a = a + b
                 Expression leftOperand = new VariableExpression(name,
                         expr.getLineNumber(), expr.getColumnNumber());
 
@@ -661,7 +655,7 @@ public class Parser {
             }
         }
 
-        // 然后处理分数修饰符
+        // 处理分数修饰符
         if (match("DOLLAR", "DOUBLE_DOLLAR")) {
             Token operator = previous();
             boolean isPermanent = operator.getType().equals("DOUBLE_DOLLAR");
@@ -678,21 +672,7 @@ public class Parser {
                     operator.getLine(), operator.getColumn());
         }
 
-        // 自增自减操作
-        if (match("PLUS_PLUS", "MINUS_MINUS")) {
-            Token operator = previous();
-            Expression right = parseUnary();
-
-            // 检查右操作数是否是变量
-            if (!(right instanceof VariableExpression)) {
-                throw error(operator, "Increment/decrement operand must be a variable");
-            }
-
-            return new UnaryExpression(operator.getLexeme(), right,
-                    operator.getLine(), operator.getColumn());
-        }
-
-        // 然后处理根式修饰符
+        // 处理根式修饰符
         if (match("BACKQUOTE")) {
             Token operator = previous();
 
@@ -707,7 +687,21 @@ public class Parser {
             return new RootExpression(expr, operator.getLine(), operator.getColumn());
         }
 
-        // 最后处理其他一元运算符
+        // 处理前缀自增/自减
+        if (match("PLUS_PLUS", "MINUS_MINUS")) {
+            Token operator = previous();
+            Expression right = parseUnary();
+
+            // 检查右操作数是否是变量
+            if (!(right instanceof VariableExpression)) {
+                throw error(operator, "Increment/decrement operand must be a variable");
+            }
+
+            return new UnaryExpression(operator.getLexeme(), right,
+                    operator.getLine(), operator.getColumn());
+        }
+
+        // 处理其他一元运算符
         if (match("BANG", "MINUS", "BITWISE_NOT")) {
             Token operator = previous();
             Expression right = parseUnary();
@@ -715,7 +709,9 @@ public class Parser {
                     operator.getLine(), operator.getColumn());
         }
 
-        Expression expr = parsePrimary();//处理后缀自增自减
+        Expression expr = parsePrimary();
+
+        // 处理后缀自增/自减
         while (match("PLUS_PLUS", "MINUS_MINUS")) {
             Token operator = previous();
 
@@ -729,13 +725,17 @@ public class Parser {
                     operator.getLine(), operator.getColumn());
         }
 
-
-        return parsePrimary();
+        return expr;
     }
 
     private Expression parsePrimary() {
-        if (match("FALSE")) return new LiteralExpression(false, previous().getLine(), previous().getColumn());
-        if (match("TRUE")) return new LiteralExpression(true, previous().getLine(), previous().getColumn());
+        debugger.debug("parsePrimary: current token = " + peek());
+        if (match("FALSE")) {
+            return new LiteralExpression(false, previous().getLine(), previous().getColumn());
+        }
+        if (match("TRUE")) {
+            return new LiteralExpression(true, previous().getLine(), previous().getColumn());
+        }
         if (match("NUMBER")) {
             String numberText = previous().getLexeme();
             Object value;
