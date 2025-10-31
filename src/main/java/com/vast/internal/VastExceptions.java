@@ -1,4 +1,4 @@
-package com.vast.internal.exception;
+package com.vast.internal;
 
 import java.util.List;
 import java.util.Set;

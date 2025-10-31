@@ -4,7 +4,7 @@ import com.vast.ast.Program;
 import com.vast.internal.Debugger;
 import com.vast.internal.Input;
 import com.vast.internal.SmartErrorSuggestor;
-import com.vast.internal.exception.VastExceptions;
+import com.vast.internal.VastExceptions;
 import com.vast.parser.Lexer;
 import com.vast.parser.Parser;
 import com.vast.parser.Token;

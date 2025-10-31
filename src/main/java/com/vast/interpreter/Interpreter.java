@@ -9,7 +9,7 @@ import com.vast.internal.SmartErrorSuggestor;
 import com.vast.internal.Sys;
 import com.vast.vm.VastLibraryLoader;
 import com.vast.vm.VastVM;
-import com.vast.internal.exception.VastExceptions;
+import com.vast.internal.VastExceptions;
 
 import java.lang.reflect.Array;
 import java.lang.reflect.Method;

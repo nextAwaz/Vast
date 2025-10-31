@@ -1,7 +1,6 @@
 package com.vast;
 
-import com.vast.internal.Debugger;
-import com.vast.internal.exception.VastExceptions;
+import com.vast.internal.VastExceptions;
 import com.vast.vm.VastVM;
 
 import java.io.File;
