@@ -7,7 +7,7 @@ import com.vast.internal.Debugger;
 import com.vast.internal.Fraction;
 import com.vast.internal.SmartErrorSuggestor;
 import com.vast.internal.Sys;
-import com.vast.registry.VastLibraryLoader;
+import com.vast.vm.VastLibraryLoader;
 import com.vast.vm.VastVM;
 import com.vast.internal.exception.VastExceptions;
 
@@ -110,19 +110,16 @@ public class Interpreter implements ASTVisitor<Void> {
      * 检查方法名是否唯一
      */
     private String resolveClassNameForMethod(String methodName, int lineNumber, int columnNumber) {
-        if (staticMethodToClass.containsKey(methodName)) {
-            String className = staticMethodToClass.get(methodName);
-            debugger.debug("Resolved method '" + methodName + "' to class: " + className); // 改为 debug
+        String className = vm.resolveMethodClass(methodName);
+
+        if (className != null) {
+            debugger.debug("Resolved method '" + methodName + "' to class: " + className);
             return className;
         }
 
-        if (methodConflicts.containsKey(methodName)) {
-            throw VastExceptions.AmbiguousReferenceException.forMethod(
-                    methodName, methodConflicts.get(methodName), lineNumber, columnNumber);
-        }
-
-        debugger.debug("Method '" + methodName + "' not found in static method mapping"); // 改为 debug
-        return null; // 方法不存在
+        // 检查是否有冲突
+        debugger.debug("Method '" + methodName + "' not found in static method mapping");
+        return null;
     }
 
     public void interpret(Program program) {
@@ -138,16 +135,6 @@ public class Interpreter implements ASTVisitor<Void> {
             debugger.error("Runtime error: " + error.getUserFriendlyMessage());
             throw error;
         }
-    }
-
-    @Override
-    public Void visitRootExpression(RootExpression expr) {
-        Object result = evaluate(expr);
-        this.lastResult = result;
-        if (result != null) {
-            debugger.debug("Root expression result: " + result);
-        }
-        return null;
     }
 
     @Override
@@ -222,23 +209,6 @@ public class Interpreter implements ASTVisitor<Void> {
         }
 
         variables.put(varName, value);
-        return null;
-    }
-
-    @Override
-    public Void visitBitwiseExpression(BitwiseExpression expr) {
-        // 按位表达式应该在 ExpressionEvaluator 中处理
-        debugger.debug("Bitwise expression: " + expr);
-        return null;
-    }
-
-    @Override
-    public Void visitFractionExpression(FractionExpression expr) {
-        Object result = evaluate(expr);
-        this.lastResult = result;
-        if (result != null) {
-            debugger.debug("Fraction expression result: " + result);
-        }
         return null;
     }
 
@@ -859,6 +829,16 @@ public class Interpreter implements ASTVisitor<Void> {
         return null;
     }
 
+    @Override
+    public Void visitFractionExpression(FractionExpression expr) {
+        Object result = evaluate(expr);
+        this.lastResult = result;
+        if (result != null) {
+            debugger.debug("Fraction expression result: " + result);
+        }
+        return null;
+    }
+
     /**
      * 表达式求值器
      */
@@ -883,43 +863,6 @@ public class Interpreter implements ASTVisitor<Void> {
             debugger.debug("Result: " + result + " (" + getValueType(result) + ")");
 
             return result;
-        }
-
-        @Override
-        public Object visitRootExpression(RootExpression expr) {
-            Object value = evaluate(expr.getExpression());
-
-            debugger.debug("Root expression: " + expr + ", value: " + value);
-
-            // 创建平方根表达式
-            return performRootOperation(value,
-                    expr.getLineNumber(), expr.getColumnNumber());
-        }
-
-        /**
-         * 执行开方运算
-         */
-        private Object performRootOperation(Object value, int lineNumber, int columnNumber) {
-            double numericValue = toDouble(value);
-
-            if (numericValue < 0) {
-                throw VastExceptions.MathError.invalidSquareRoot(numericValue, lineNumber, columnNumber);
-            }
-
-            double result = Math.sqrt(numericValue);
-
-            // 尝试简化结果
-            if (result == Math.floor(result) && !Double.isInfinite(result)) {
-                return (int) result;  // 整数结果
-            }
-
-            // 尝试表示为分数
-            Fraction fraction = Fraction.fromNumber(result);
-            if (isExactFraction(fraction, result)) {
-                return fraction;  // 精确的分数表示
-            }
-
-            return result;  // 浮点数结果
         }
 
         @Override
@@ -963,39 +906,6 @@ public class Interpreter implements ASTVisitor<Void> {
         }
 
         @Override
-        public Object visitBitwiseExpression(BitwiseExpression expr) {
-            Object left = evaluate(expr.getLeft());
-            Object right = evaluate(expr.getRight());
-
-            switch (expr.getOperator()) {
-                case "&": return performBitwiseAnd(left, right);
-                case "|": return performBitwiseOr(left, right);
-                case "^": return performBitwiseXor(left, right);
-                default:
-                    throw new VastExceptions.NotGrammarException(
-                            "Unknown bitwise operator: " + expr.getOperator(),
-                            expr.getLineNumber(), expr.getColumnNumber()
-                    );
-            }
-        }
-
-        @Override
-        public Object visitFractionExpression(FractionExpression expr) {
-            Object value = evaluate(expr.getExpression());
-            boolean isPermanent = expr.isPermanent();
-
-            debugger.debug("Fraction expression: " + expr + ", value: " + value +
-                    ", permanent: " + isPermanent);
-
-            // 创建分数对象
-            Fraction fraction = createFraction(value,
-                    expr.getLineNumber(), expr.getColumnNumber());
-            fraction.setPermanent(isPermanent);
-
-            return fraction;
-        }
-
-        @Override
         public Object visitMemberAccessExpression(MemberAccessExpression expr) {
             Object left = evaluate(expr.getObject());
             String memberName = expr.getMemberName();
@@ -1013,6 +923,22 @@ public class Interpreter implements ASTVisitor<Void> {
                     expr.getLineNumber(),
                     expr.getColumnNumber()
             );
+        }
+
+        @Override
+        public Object visitFractionExpression(FractionExpression expr) {
+            Object value = evaluate(expr.getExpression());
+            boolean isPermanent = expr.isPermanent();
+
+            debugger.debug("Fraction expression: " + expr + ", value: " + value +
+                    ", permanent: " + isPermanent);
+
+            // 创建分数对象
+            Fraction fraction = createFraction(value,
+                    expr.getLineNumber(), expr.getColumnNumber());
+            fraction.setPermanent(isPermanent);
+
+            return fraction;
         }
 
         @Override
@@ -1072,38 +998,23 @@ public class Interpreter implements ASTVisitor<Void> {
             Object right = evaluate(expr.getRight());
 
             switch (expr.getOperator()) {
-                case "+":
-                    return performAddition(left, right);
-                case "-":
-                    return performSubtraction(left, right);
-                case "*":
-                    return performMultiplication(left, right);
-                case "/":
-                    return performDivision(left, right);
-                case "**":
-                    return performPower(left, right);
-                case "//":
-                    return performIntegerDivision(left, right);  // 地板除
-                case "%":
-                    return performModulo(left, right);
-                case "++":
-                    return performNumberConcatenation(left, right);
-                case "==":
-                    return left.equals(right);
-                case "!=":
-                    return !left.equals(right);
-                case ">":
-                    return compareValues(left, right) > 0;
-                case "<":
-                    return compareValues(left, right) < 0;
-                case ">=":
-                    return compareValues(left, right) >= 0;
-                case "<=":
-                    return compareValues(left, right) <= 0;
-                case "&&":
-                    return toBoolean(left) && toBoolean(right);
-                case "||":
-                    return toBoolean(left) || toBoolean(right);
+                case "+": return performAddition(left, right);
+                case "-": return performSubtraction(left, right);
+                case "*": return performMultiplication(left, right);
+                case "/": return performDivision(left, right);
+                case "**": return performPower(left, right);
+                case "//": return performIntegerDivision(left, right);
+                case "%": return performModulo(left, right);
+                case "++": return performNumberConcatenation(left, right);
+                case "==": return left.equals(right);
+                case "!=": return !left.equals(right);
+                case ">": return compareValues(left, right) > 0;
+                case "<": return compareValues(left, right) < 0;
+                case ">=": return compareValues(left, right) >= 0;
+                case "<=": return compareValues(left, right) <= 0;
+                case "AND": return toBoolean(left) && toBoolean(right);
+                case "OR": return toBoolean(left) || toBoolean(right);
+                case "XOR": return toBoolean(left) ^ toBoolean(right);
                 default:
                     throw new VastExceptions.NotGrammarException(
                             "Unknown operator: " + expr.getOperator(),
@@ -1133,22 +1044,8 @@ public class Interpreter implements ASTVisitor<Void> {
                             "Unary - requires numeric operand",
                             "Operand type: " + (right != null ? right.getClass().getSimpleName() : "null")
                     );
-                case "!":
-                    if (right instanceof Boolean) return !(Boolean) right;
-                    throw new VastExceptions.NotGrammarException(
-                            "Unary ! requires boolean operand",
-                            "Operand type: " + (right != null ? right.getClass().getSimpleName() : "null"),
-                            expr.getLineNumber(),
-                            expr.getColumnNumber()
-                    );
-                case "~":  // 按位取反
-                    if (right instanceof Integer) {
-                        return ~(Integer) right;
-                    }
-                    throw new VastExceptions.MathError(
-                            "Unary ~ requires integer operand",
-                            "Operand type: " + (right != null ? right.getClass().getSimpleName() : "null")
-                    );
+                case "NOT":
+                    return !toBoolean(right);
                 default:
                     throw new VastExceptions.NotGrammarException(
                             "Unknown unary operator: " + expr.getOperator(),
@@ -1156,6 +1053,26 @@ public class Interpreter implements ASTVisitor<Void> {
                             expr.getColumnNumber()
                     );
             }
+        }
+
+        /**
+         * 执行幂运算
+         */
+        private Object performPower(Object left, Object right) {
+            checkNumberOperands(left, right);
+            double base = toDouble(left);
+            double exponent = toDouble(right);
+            double result = Math.pow(base, exponent);
+
+            // 如果操作数都是整数且指数非负，尝试返回整数结果
+            if (left instanceof Integer && right instanceof Integer && exponent >= 0) {
+                // 检查结果是否在整数范围内且没有精度损失
+                if (result <= Integer.MAX_VALUE && result >= Integer.MIN_VALUE &&
+                        result == Math.floor(result)) {
+                    return (int) result;
+                }
+            }
+            return result;
         }
 
         /**
@@ -1292,116 +1209,6 @@ public class Interpreter implements ASTVisitor<Void> {
                         lineNumber, columnNumber
                 );
             }
-        }
-
-        private Object performBitwiseAnd(Object left, Object right) {
-            checkIntegerOperands(left, right, "bitwise AND");
-            int leftInt = toInt(left);
-            int rightInt = toInt(right);
-            return leftInt & rightInt;
-        }
-
-        private Object performBitwiseOr(Object left, Object right) {
-            checkIntegerOperands(left, right, "bitwise OR");
-            int leftInt = toInt(left);
-            int rightInt = toInt(right);
-            return leftInt | rightInt;
-        }
-
-        private Object performBitwiseXor(Object left, Object right) {
-            checkIntegerOperands(left, right, "bitwise XOR");
-            int leftInt = toInt(left);
-            int rightInt = toInt(right);
-            return leftInt ^ rightInt;
-        }
-
-        private void checkIntegerOperands(Object left, Object right, String operation) {
-            if (!(left instanceof Integer) || !(right instanceof Integer)) {
-                throw new VastExceptions.MathError(
-                        "Operands must be integers for " + operation,
-                        "Got: " + getValueType(left) + " and " + getValueType(right)
-                );
-            }
-        }
-
-        private Object performPower(Object left, Object right) {
-            // 处理分数指数（开方运算）
-            if (right instanceof Fraction) {
-                return performFractionPower(left, (Fraction) right);
-            }
-
-            checkNumberOperands(left, right);
-            double base = toDouble(left);
-            double exponent = toDouble(right);
-            double result = Math.pow(base, exponent);
-
-            if (left instanceof Integer && right instanceof Integer && exponent >= 0) {
-                return (int) result;
-            }
-            return result;
-        }
-
-        /**
-         * 处理分数指数的幂运算（开方运算）
-         */
-        private Object performFractionPower(Object base, Fraction exponent) {
-            double baseValue = toDouble(base);
-
-            // 检查指数是否为 1/n 形式（开n次方）
-            if (exponent.getNumerator() == 1) {
-                int root = exponent.getDenominator();
-
-                if (root == 2) {
-                    // 平方根
-                    if (baseValue < 0) {
-                        throw VastExceptions.MathError.invalidSquareRoot(baseValue);
-                    }
-                    double result = Math.sqrt(baseValue);
-                    return simplifyRootResult(result);
-                } else if (root == 3) {
-                    // 立方根
-                    double result = Math.cbrt(baseValue);
-                    return simplifyRootResult(result);
-                } else {
-                    // n次方根
-                    if (baseValue < 0 && root % 2 == 0) {
-                        throw VastExceptions.MathError.invalidSquareRoot(baseValue);
-                    }
-                    double result = Math.pow(baseValue, 1.0 / root);
-                    return simplifyRootResult(result);
-                }
-            } else {
-                // 一般的分数指数：a^(m/n) = (a^m)的n次方根
-                double numeratorPower = Math.pow(baseValue, exponent.getNumerator());
-                return performFractionPower(numeratorPower,
-                        new Fraction(1, exponent.getDenominator()));
-            }
-        }
-
-        /**
-         * 简化根式结果：如果结果是整数则返回整数，否则返回分数或浮点数
-         */
-        private Object simplifyRootResult(double result) {
-            // 检查是否为整数
-            if (result == Math.floor(result) && !Double.isInfinite(result)) {
-                return (int) result;
-            }
-
-            // 尝试表示为分数
-            Fraction fraction = Fraction.fromNumber(result);
-            if (isExactFraction(fraction, result)) {
-                return fraction;
-            }
-
-            return result;
-        }
-
-        /**
-         * 检查分数是否精确表示原值
-         */
-        private boolean isExactFraction(Fraction fraction, double original) {
-            double fractionValue = fraction.toDouble();
-            return Math.abs(fractionValue - original) < 1e-10;
         }
 
         private Object performIntegerDivision(Object left, Object right) {

@@ -12,9 +12,13 @@ import java.util.List;
 import java.util.Scanner;
 
 public class VastCLI {
-    static String ver = "0.1.2(hotfix-9)"; //版本信息
+    static String ver = "0.1.2(hotfix-10)"; //版本信息
+    private static LibraryManager libraryManager;
 
     public static void main(String[] args) {
+        VastVM tempVM = new VastVM();
+        libraryManager = new LibraryManager(tempVM);
+
         if (args.length == 0) {
             printUsage();
             return;
@@ -105,6 +109,8 @@ public class VastCLI {
         println("Type 'reset' to reset VM state");
         println("Type 'debug on/off' to toggle stack traces");
         println("=".repeat(50));
+
+        libraryManager.listLibraries();
 
         Scanner scanner = new Scanner(System.in);
         boolean debugMode = false;
@@ -230,7 +236,6 @@ public class VastCLI {
                 !trimmed.contains("{");
     }
 
-    // 修改printUsage方法 - 移除eval相关说明
     private static void printUsage() {
         println("@ Vast Command Line Interface");
         println("Usage: vast <command> [arguments]");
@@ -244,11 +249,16 @@ public class VastCLI {
         println("  info <script.vast>   Show script statistics");
         println("  lib <command>        Manage external libraries");
         println();
+        println("Library Commands:");
+        println("  lib create <name>    Create new library template");
+        println("  lib list             List loaded libraries");
+        println("  lib info <name>      Show library information");
+        println("  lib status           Show loader status");
+        println();
         println("Examples:");
         println("  vast run script.vast");
-        println("  vast run script.vast --debug");
-        println("  vast shell");
-        println("  vast help syntax");
+        println("  vast lib create MyMath");
+        println("  vast lib list");
     }
 
     private static void handleLibCommand(String[] args) {
@@ -258,6 +268,7 @@ public class VastCLI {
             println("  create <name>    Create a new library template");
             println("  list             List available libraries");
             println("  info <lib>       Show library information");
+            println("  status           Show loader status");
             return;
         }
 
@@ -272,6 +283,9 @@ public class VastCLI {
                 break;
             case "info":
                 handleLibInfoCommand(args);
+                break;
+            case "status":
+                handleLibStatusCommand();
                 break;
             default:
                 println("Unknown lib command: " + subCommand);
@@ -327,13 +341,11 @@ public class VastCLI {
         println("  a ++ b                        - Number concatenation");
         println("  a == b, a != b                - Equality");
         println("  a > b, a < b, a >= b, a <= b  - Comparison");
-        println("  a && b, a || b                - Logical operators");
-        println("  a & b, a | b, a ^ b, ~a       - Bitwise operators");
+        println("  a AND b, a OR b, a XOR b      - Logical operators");
+        println("  NOT a                         - Logical negation");
         println();
 
         println("Special Features:");
-        println("  $(expression)                 - Fraction (single step)");
-        println("  $$(expression)                - Permanent fraction");
         println("  Type casting: (type) value    - Explicit type conversion");
     }
 
@@ -436,105 +448,11 @@ public class VastCLI {
         }
 
         String libName = args[2];
-        String targetDir = "./" + libName;
-
-        try {
-            // 创建目录结构
-            java.nio.file.Files.createDirectories(java.nio.file.Paths.get(targetDir));
-            java.nio.file.Files.createDirectories(java.nio.file.Paths.get(targetDir, "src"));
-
-            // 创建library.properties
-            String props = String.format(
-                    "name=%s\n" +
-                            "version=1.0.0\n" +
-                            "description=A custom Vast library\n" +
-                            "author=Your Name\n" +
-                            "mainClass=com.example.%s.%sLibrary\n" +
-                            "dependencies=\n" +
-                            "config.example=value\n",
-                    libName, libName.toLowerCase(), capitalize(libName)
-            );
-
-            java.nio.file.Files.write(java.nio.file.Paths.get(targetDir, "library.properties"), props.getBytes());
-
-            // 创建示例Java文件
-            String javaCode = String.format(
-                    "package com.example.%s;\n\n" +
-                            "import com.vast.registry.*;\n" +
-                            "import com.vast.vm.VastVM;\n" +
-                            "import java.util.*;\n\n" +
-                            "public class %sLibrary implements VastExternalLibrary {\n\n" +
-                            "    @Override\n" +
-                            "    public LibraryMetadata getMetadata() {\n" +
-                            "        return new LibraryMetadata(\n" +
-                            "            \"%s\", \n" +
-                            "            \"1.0.0\", \n" +
-                            "            \"A custom Vast library\", \n" +
-                            "            \"Your Name\"\n" +
-                            "        );\n" +
-                            "    }\n\n" +
-                            "    @Override\n" +
-                            "    public void initialize(VastVM vm, VastLibraryRegistry registry) {\n" +
-                            "        System.out.println(\"%s library initialized\");\n" +
-                            "    }\n\n" +
-                            "    @Override\n" +
-                            "    public Map<String, Class<?>> getProvidedClasses() {\n" +
-                            "        Map<String, Class<?>> classes = new HashMap<>();\n" +
-                            "        // Register your classes here\n" +
-                            "        // classes.put(\"MyClass\", MyClass.class);\n" +
-                            "        return classes;\n" +
-                            "    }\n\n" +
-                            "    // Add your library methods here\n" +
-                            "    public static void exampleMethod() {\n" +
-                            "        System.out.println(\"Hello from %s library!\");\n" +
-                            "    }\n" +
-                            "}\n",
-                    libName.toLowerCase(), capitalize(libName), libName, libName, libName
-            );
-
-            java.nio.file.Files.write(java.nio.file.Paths.get(targetDir, "src", capitalize(libName) + "Library.java"),
-                    javaCode.getBytes());
-
-            // 创建README
-            String readme = String.format(
-                    "# %s Library\n\n" +
-                            "A custom library for Vast scripting language.\n\n" +
-                            "## Usage\n\n" +
-                            "```vast\n" +
-                            "imp %s\n" +
-                            "// Use your library classes and methods here\n" +
-                            "```\n\n" +
-                            "## Building\n\n" +
-                            "1. Compile the Java source\n" +
-                            "2. Package as .jar file\n" +
-                            "3. Place in vast_libs directory or current directory\n",
-                    libName, libName
-            );
-
-            java.nio.file.Files.write(java.nio.file.Paths.get(targetDir, "README.md"), readme.getBytes());
-
-            println("@ Library template created: " + targetDir);
-            println("@ Next steps:");
-            println("  1. Edit library.properties");
-            println("  2. Implement your library class");
-            println("  3. Package as .jar or .zip");
-            println("  4. Use with: imp " + libName);
-
-        } catch (Exception e) {
-            println("Failed to create library template: " + e.getMessage());
-        }
+        libraryManager.createLibrary(libName);
     }
 
     private static void handleLibListCommand() {
-        com.vast.registry.VastLibraryRegistry registry = com.vast.registry.VastLibraryRegistry.getInstance();
-        java.util.Set<String> libraries = registry.getRegisteredLibraryIds();
-
-        println("@ Available Libraries:");
-        if (libraries.isEmpty()) {
-            println("  No libraries registered");
-        } else {
-            libraries.forEach(lib -> println("  - " + lib));
-        }
+        libraryManager.listLibraries();
     }
 
     private static void handleLibInfoCommand(String[] args) {
@@ -544,16 +462,11 @@ public class VastCLI {
         }
 
         String libName = args[2];
-        com.vast.registry.VastLibraryRegistry registry = com.vast.registry.VastLibraryRegistry.getInstance();
+        libraryManager.showLibraryInfo(libName);
+    }
 
-        if (registry.isLibraryLoaded(libName)) {
-            com.vast.registry.VastExternalLibrary lib = registry.getLoadedLibrary(libName);
-            println("@ Library Info: " + libName);
-            println("  Metadata: " + lib.getMetadata());
-            println("  Provided Classes: " + lib.getProvidedClasses().keySet());
-        } else {
-            println("Library not loaded: " + libName);
-        }
+    private static void handleLibStatusCommand() {
+        libraryManager.showLoaderInfo();
     }
 
     private static String capitalize(String str) {

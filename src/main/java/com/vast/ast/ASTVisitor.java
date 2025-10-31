@@ -18,8 +18,6 @@ public interface ASTVisitor<T> {
     T visitMethodCallExpression(MethodCallExpression expr);
     T visitTypeCastExpression(TypeCastExpression expr);
     T visitFractionExpression(FractionExpression expr);
-    T visitBitwiseExpression(BitwiseExpression expr);
-    T visitRootExpression(RootExpression expr);
 
     // 语句访问方法
     T visitVariableDeclaration(VariableDeclaration stmt);

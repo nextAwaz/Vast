@@ -502,53 +502,26 @@ public class Parser {
         }
     }
 
-    //按位或运算
-    private Expression parseBitwiseOr() {
-        Expression expr = parseBitwiseXor();
-
-        while (match("BITWISE_OR")) {
-            Token operator = previous();
-            Expression right = parseBitwiseXor();
-            expr = new BitwiseExpression(expr, "|", right,
-                    operator.getLine(), operator.getColumn());
-        }
-
-        return expr;
-    }
-    //按位异或运算
-    private Expression parseBitwiseXor() {
-        Expression expr = parseBitwiseAnd();
-
-        while (match("BITWISE_XOR")) {
-            Token operator = previous();
-            Expression right = parseBitwiseAnd();
-            expr = new BitwiseExpression(expr, "^", right,
-                    operator.getLine(), operator.getColumn());
-        }
-
-        return expr;
-    }
-    //按位与运算
-    private Expression parseBitwiseAnd() {
-        Expression expr = parseEquality();
-
-        while (match("BITWISE_AND")) {
-            Token operator = previous();
-            Expression right = parseEquality();
-            expr = new BitwiseExpression(expr, "&", right,
-                    operator.getLine(), operator.getColumn());
-        }
-
-        return expr;
-    }
-
     private Expression parseLogicalOr() {
-        Expression expr = parseLogicalAnd();
+        Expression expr = parseLogicalXor();
 
         while (match("OR")) {
             Token operator = previous();
+            Expression right = parseLogicalXor();
+            expr = new BinaryExpression(expr, "OR", right,
+                    operator.getLine(), operator.getColumn());
+        }
+
+        return expr;
+    }
+
+    private Expression parseLogicalXor() {
+        Expression expr = parseLogicalAnd();
+
+        while (match("XOR")) {
+            Token operator = previous();
             Expression right = parseLogicalAnd();
-            expr = new BinaryExpression(expr, "||", right,
+            expr = new BinaryExpression(expr, "XOR", right,
                     operator.getLine(), operator.getColumn());
         }
 
@@ -561,7 +534,7 @@ public class Parser {
         while (match("AND")) {
             Token operator = previous();
             Expression right = parseEquality();
-            expr = new BinaryExpression(expr, "&&", right,
+            expr = new BinaryExpression(expr, "AND", right,
                     operator.getLine(), operator.getColumn());
         }
 
@@ -672,19 +645,11 @@ public class Parser {
                     operator.getLine(), operator.getColumn());
         }
 
-        // 处理根式修饰符
-        if (match("BACKQUOTE")) {
+        if (match("NOT")) {
             Token operator = previous();
-
-            // 必须紧跟左括号
-            if (!match("LEFT_PAREN")) {
-                throw error(peek(), "Root modifier must be followed by parenthesized expression");
-            }
-
-            Expression expr = parseExpression();
-            consume("RIGHT_PAREN", "Expect ')' after root expression");
-
-            return new RootExpression(expr, operator.getLine(), operator.getColumn());
+            Expression right = parseUnary();
+            return new UnaryExpression("NOT", right,
+                    operator.getLine(), operator.getColumn());
         }
 
         // 处理前缀自增/自减

@@ -1,12 +1,14 @@
 package com.vast.internal;
 
-//运算符支持内置库
+// 运算符支持内置库
 public class Ops {
-    // 这些方法主要用于复杂的运算，简单运算推荐直接使用运算符
+    // 逻辑运算方法
     public static boolean and(boolean a, boolean b) { return a && b; }
     public static boolean or(boolean a, boolean b) { return a || b; }
+    public static boolean xor(boolean a, boolean b) { return a ^ b; }
     public static boolean not(boolean a) { return !a; }
 
+    // 字符串操作
     public static String concat(String a, String b) { return a + b; }
 
     public static String repeat(String str, int times) {

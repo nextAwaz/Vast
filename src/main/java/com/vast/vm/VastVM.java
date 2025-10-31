@@ -9,10 +9,8 @@ import com.vast.parser.Lexer;
 import com.vast.parser.Parser;
 import com.vast.parser.Token;
 import com.vast.interpreter.Interpreter;
-import com.vast.registry.VastExternalLibrary;
-import com.vast.registry.VastLibraryLoader;
-import com.vast.registry.VastLibraryRegistry;
 
+import java.io.File;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -28,16 +26,14 @@ public class VastVM {//Vast 虚拟机核心类
     private final Map<String, Object> localVariables = new HashMap<>();
     private Object lastResult = null;
     private boolean debugMode = false;
+    private final Debugger debugger;
+    private Interpreter interpreter;
 
     private final SmartErrorSuggestor errorSuggestor;// 智能错误建议器
 
     // 对于外置库的支持
     private final VastLibraryLoader libraryLoader;
-    private final VastLibraryRegistry libraryRegistry;
 
-    // 调试器
-    private final Debugger debugger;
-    private Interpreter interpreter;
 
     static {
         // 注册内置类
@@ -54,21 +50,89 @@ public class VastVM {//Vast 虚拟机核心类
             importedClasses.put(entry.getKey(), entry.getValue());
         }
 
-        // 初始化库加载器和注册表
-        this.libraryLoader = VastLibraryLoader.getInstance();
-        this.libraryRegistry = VastLibraryRegistry.getInstance(); // 初始化注册表
-
-        // 扫描并加载可用库
-        this.libraryLoader.scanAndLoadAvailableLibraries(this);
-
         this.debugger = Debugger.getInstance();
-
-        this.interpreter = new Interpreter(this);// 初始化解释器
-
+        this.interpreter = new Interpreter(this);
         this.errorSuggestor = new SmartErrorSuggestor(this);
+        this.libraryLoader = VastLibraryLoader.getInstance();
 
         // 初始化全局变量
         initializeGlobalVariables();
+
+        // 扫描并加载可用库
+        libraryLoader.scanAndLoadAvailableLibraries(this);
+    }
+
+    /**
+     * 获取自定义语法管理器
+     */
+    public CustomSyntaxManager getCustomSyntaxManager() {
+        return libraryLoader.getCustomSyntaxManager();
+    }
+
+    /**
+     * 检查是否启用了高级特性
+     */
+    public boolean hasAdvancedFeatures() {
+        return !libraryLoader.getCustomSyntaxManager().getAllRules().isEmpty();
+    }
+
+    /**
+     * 扫描并加载可用库
+     */
+    private void scanAndLoadAvailableLibraries() {
+        // 扫描当前目录
+        scanDirectoryForLibraries(new File("."));
+
+        // 扫描 vast_libs 目录
+        File libsDir = new File("vast_libs");
+        if (libsDir.exists() && libsDir.isDirectory()) {
+            scanDirectoryForLibraries(libsDir);
+        }
+    }
+
+    /**
+     * 扫描目录中的库文件
+     */
+    private void scanDirectoryForLibraries(File dir) {
+        File[] files = dir.listFiles((d, name) ->
+                name.toLowerCase().endsWith(".jar") || name.toLowerCase().endsWith(".zip"));
+
+        if (files != null) {
+            for (File file : files) {
+                if (libraryLoader.isVastVMJar(file)) {
+                    continue; // 跳过 VM 自身的 JAR
+                }
+
+                try {
+                    // 从文件名推断库名（移除扩展名）
+                    String libraryName = file.getName().replaceFirst("[.][^.]+$", "");
+                    libraryLoader.loadLibraryFromFile(file, libraryName, this);
+                } catch (Exception e) {
+                    debugger.debug("Failed to auto-load library: " + file.getName() + " - " + e.getMessage());
+                }
+            }
+        }
+    }
+
+    /**
+     * 执行导入语句
+     */
+    public boolean handleImport(String importPath) {
+        return libraryLoader.loadLibraryFromImport(importPath, this);
+    }
+
+    /**
+     * 解析方法名对应的类名
+     */
+    public String resolveMethodClass(String methodName) {
+        return libraryLoader.resolveClassNameForMethod(methodName, this);
+    }
+
+    /**
+     * 获取库加载器信息
+     */
+    public String getLibraryLoaderInfo() {
+        return libraryLoader.getLoaderInfo();
     }
 
     public void setDebugMode(boolean debug) {
@@ -190,10 +254,17 @@ public class VastVM {//Vast 虚拟机核心类
 
         // 重新扫描和加载库
         if (libraryLoader != null) {
-            libraryLoader.scanAndLoadAvailableLibraries(this);
+            libraryLoader.cleanup(); // 先清理已加载的库
+            libraryLoader.scanAndLoadAvailableLibraries(this); // 重新扫描加载
         }
 
         debugger.log("@ VM state has been reset");
+
+        // 如果有高级特性，显示相关信息
+        if (hasAdvancedFeatures()) {
+            debugger.debug("Advanced features loaded: " +
+                    libraryLoader.getCustomSyntaxManager().getAllRules().size() + " custom rules");
+        }
     }
 
     public static Map<String, Class<?>> getBuiltinClasses() {
@@ -221,39 +292,5 @@ public class VastVM {//Vast 虚拟机核心类
         }
 
         return info.toString();
-    }
-
-    //============= 有关外置库的内容 ================
-    public VastLibraryLoader getLibraryLoader() {
-        return libraryLoader;
-    }
-
-    /**
-     * 手动注册外置库
-     */
-    public void registerExternalLibrary(String libraryId, Class<? extends VastExternalLibrary> libraryClass) {
-        libraryRegistry.registerLibrary(libraryId, libraryClass);
-        System.out.println("@ Registering external library: " + libraryId);
-    }
-
-    /**
-     * 手动注册外置库实例
-     */
-    public void registerExternalLibraryInstance(String libraryId, VastExternalLibrary instance) {
-        libraryRegistry.registerLibraryInstance(libraryId, instance);
-    }
-
-    /**
-     * 加载外置库
-     */
-    public boolean loadExternalLibrary(String libraryId) {
-        return libraryLoader.loadLibraryFromImport(libraryId, this);
-    }
-
-    /**
-     * 获取库注册表
-     */
-    public VastLibraryRegistry getLibraryRegistry() {
-        return libraryRegistry;
     }
 }

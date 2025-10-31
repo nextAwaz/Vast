@@ -32,6 +32,11 @@ public class Lexer {
         KEYWORDS.put("else", "ELSE");
         KEYWORDS.put("while", "WHILE");
         KEYWORDS.put("for", "FOR");
+
+        KEYWORDS.put("and", "AND");
+        KEYWORDS.put("or", "OR");
+        KEYWORDS.put("xor", "XOR");
+        KEYWORDS.put("not", "NOT");
     }
 
     public Lexer(String source) {
@@ -139,24 +144,6 @@ public class Lexer {
                     addToken("GREATER");
                 }
                 break;
-            case '|':
-                if (match('|')) {
-                    addToken("OR");  // 逻辑或
-                } else {
-                    addToken("BITWISE_OR");  // 按位或
-                }
-                break;
-
-            case '&':
-                if (match('&')) {
-                    addToken("AND");  // 逻辑与
-                } else {
-                    addToken("BITWISE_AND");  // 按位与
-                }
-                break;
-
-            case '^': addToken("BITWISE_XOR"); break;  // 按位异或
-            case '~': addToken("BITWISE_NOT"); break;  // 按位取反
 
             case '$':
                 if (match('$')) {
@@ -164,9 +151,6 @@ public class Lexer {
                 } else {
                     addToken("DOLLAR");  // 单步分数修饰符
                 }
-                break;
-            case '`':
-                addToken("BACKQUOTE");//开方运算（由于键盘上面没有开方符号，所以使用反引号代替）
                 break;
 
             case ' ':
