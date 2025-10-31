@@ -273,25 +273,35 @@ public class Interpreter implements ASTVisitor<Void> {
         String varName = stmt.getVariableName();
         String typeHint = stmt.getTypeHint();
 
-        debugger.debug("Variable declaration: " + varName +  // 改为 debug
+        debugger.debug("Variable declaration: " + varName +
                 ", type: " + typeHint + ", initial value: " + value +
                 (stmt.isTypeCast() ? " (type cast)" : ""));
 
         // 强类型变量声明
         if (typeHint != null) {
             variableTypes.put(varName, typeHint);
-            debugger.debug("Registered type constraint: " + varName + " -> " + typeHint); // 改为 debug
+            debugger.debug("Registered type constraint: " + varName + " -> " + typeHint);
 
-            // 严格验证初始值的类型
+            // 严格验证初始值的类型，支持隐式转换
             if (value != null) {
-                validateTypeCompatibility(typeHint, value, varName,
+                if (!isTypeCompatible(typeHint, value)) {
+                    String errorMsg = "Type mismatch: cannot assign " + getValueType(value) +
+                            " to variable '" + varName + "' of type " + typeHint;
+                    debugger.log(errorMsg);
+                    throw new VastExceptions.NotGrammarException(
+                            errorMsg, stmt.getLineNumber(), stmt.getColumnNumber()
+                    );
+                }
+
+                // 如果类型兼容但需要转换，进行自动类型转换
+                value = performAutoConversion(value, typeHint,
                         stmt.getLineNumber(), stmt.getColumnNumber());
             }
         }
 
         variables.put(varName, value);
         this.lastResult = value;
-        debugger.debug("Var declared: " + varName + " = " + value +  // 改为 debug
+        debugger.debug("Var declared: " + varName + " = " + value +
                 (typeHint != null ? " (type: " + typeHint + ")" : ""));
         return null;
     }
@@ -306,9 +316,20 @@ public class Interpreter implements ASTVisitor<Void> {
                 (typeHint != null ? " (strong type: " + typeHint + ")" : " (free type)"));
 
         if (typeHint != null) {
-            // 强类型赋值 - 严格类型检查
-            validateTypeCompatibility(typeHint, value, varName,
+            // 强类型赋值 - 严格类型检查，支持隐式转换
+            if (!isTypeCompatible(typeHint, value)) {
+                String errorMsg = "Type mismatch: cannot assign " + getValueType(value) +
+                        " to variable '" + varName + "' of type " + typeHint;
+                debugger.log(errorMsg);
+                throw new VastExceptions.NotGrammarException(
+                        errorMsg, stmt.getLineNumber(), stmt.getColumnNumber()
+                );
+            }
+
+            // 如果类型兼容但需要转换，进行自动类型转换
+            value = performAutoConversion(value, typeHint,
                     stmt.getLineNumber(), stmt.getColumnNumber());
+
             variableTypes.put(varName, typeHint);
             debugger.debug("Strong type assignment PASSED");
         } else {
@@ -748,13 +769,17 @@ public class Interpreter implements ASTVisitor<Void> {
         switch (expectedType) {
             case "int":
             case "int32":
-                return value instanceof Integer;
+                return value instanceof Integer ||
+                        (value instanceof String && canParseAsInt((String) value));
             case "int8":
             case "byte":
                 if (value instanceof Byte) return true;
                 if (value instanceof Integer) {
                     int intValue = (Integer) value;
                     return intValue >= Byte.MIN_VALUE && intValue <= Byte.MAX_VALUE;
+                }
+                if (value instanceof String) {
+                    return canParseAsByte((String) value);
                 }
                 return false;
             case "int16":
@@ -764,26 +789,35 @@ public class Interpreter implements ASTVisitor<Void> {
                     int intValue = (Integer) value;
                     return intValue >= Short.MIN_VALUE && intValue <= Short.MAX_VALUE;
                 }
+                if (value instanceof String) {
+                    return canParseAsShort((String) value);
+                }
                 return false;
             case "int64":
             case "long":
-                return value instanceof Long || value instanceof Integer;
+                return value instanceof Long || value instanceof Integer ||
+                        (value instanceof String && canParseAsLong((String) value));
             case "double":
-                return value instanceof Double || value instanceof Integer;
+                return value instanceof Double || value instanceof Integer ||
+                        (value instanceof String && canParseAsDouble((String) value));
             case "float":
-                return value instanceof Float || value instanceof Integer || value instanceof Double;
+                return value instanceof Float || value instanceof Integer ||
+                        value instanceof Double || (value instanceof String && canParseAsFloat((String) value));
             case "bool":
             case "boolean":
-                return value instanceof Boolean;
+                return value instanceof Boolean ||
+                        (value instanceof String && canParseAsBoolean((String) value));
             case "string":
-                return value instanceof String;
+                return true; // 任何类型都可以隐式转换为字符串
             case "char":
                 return value instanceof Character ||
-                        (value instanceof String && ((String) value).length() == 1);
+                        (value instanceof String && ((String) value).length() == 1) ||
+                        (value instanceof Integer && isValidCharCode((Integer) value));
             case "large":
-                // large 可以接受任何数值类型
+                // large 可以接受任何数值类型或可解析为数字的字符串
                 return value instanceof Integer || value instanceof Long ||
-                        value instanceof java.math.BigInteger;
+                        value instanceof java.math.BigInteger ||
+                        (value instanceof String && canParseAsBigInteger((String) value));
             default:
                 // 未知类型，允许任何赋值
                 return true;
@@ -1643,6 +1677,79 @@ public class Interpreter implements ASTVisitor<Void> {
         }
     }
 
+    private boolean canParseAsInt(String str) {
+        try {
+            Integer.parseInt(str);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    private boolean canParseAsByte(String str) {
+        try {
+            Byte.parseByte(str);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    private boolean canParseAsShort(String str) {
+        try {
+            Short.parseShort(str);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    private boolean canParseAsLong(String str) {
+        try {
+            Long.parseLong(str);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    private boolean canParseAsDouble(String str) {
+        try {
+            Double.parseDouble(str);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    private boolean canParseAsFloat(String str) {
+        try {
+            Float.parseFloat(str);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    private boolean canParseAsBoolean(String str) {
+        String lower = str.toLowerCase();
+        return lower.equals("true") || lower.equals("false") ||
+                lower.equals("1") || lower.equals("0");
+    }
+
+    private boolean canParseAsBigInteger(String str) {
+        try {
+            new java.math.BigInteger(str);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    private boolean isValidCharCode(int code) {
+        return code >= Character.MIN_VALUE && code <= Character.MAX_VALUE;
+    }
+
     /**
      * 执行类型转换
      */
@@ -1686,6 +1793,56 @@ public class Interpreter implements ASTVisitor<Void> {
                     lineNumber, columnNumber
             );
         }
+    }
+
+    private Object performAutoConversion(Object value, String targetType,
+                                         int lineNumber, int columnNumber) {
+        if (value == null) return null;
+
+        String actualType = getValueType(value);
+        if (actualType.equals(targetType)) {
+            return value; // 类型相同，无需转换
+        }
+
+        // 处理常见的自动类型转换
+        switch (targetType) {
+            case "int":
+            case "int32":
+                if (value instanceof String) {
+                    try {
+                        return Integer.parseInt((String) value);
+                    } catch (NumberFormatException e) {
+                        // 这里不会发生，因为已经在 isTypeCompatible 中检查过
+                        return 0;
+                    }
+                }
+                break;
+            case "double":
+                if (value instanceof String) {
+                    try {
+                        return Double.parseDouble((String) value);
+                    } catch (NumberFormatException e) {
+                        return 0.0;
+                    }
+                }
+                if (value instanceof Integer) {
+                    return ((Integer) value).doubleValue();
+                }
+                break;
+            case "bool":
+            case "boolean":
+                if (value instanceof String) {
+                    String str = ((String) value).toLowerCase();
+                    return str.equals("true") || str.equals("1");
+                }
+                if (value instanceof Integer) {
+                    return ((Integer) value) != 0;
+                }
+                break;
+            // 可以添加更多自动转换规则...
+        }
+
+        return value; // 无法自动转换，返回原值
     }
 
     /**
